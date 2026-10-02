@@ -2,21 +2,21 @@
 
 - Product: полный серверный AWG Manager Gateway; PRODUCT_SPEC.md.
 - Milestone: M0 — воспроизводимая основа перед single-client DIRECT/BLOCK gate.
-- Current task: GH-001 — новая рабочая область и проверенная публикация; далее POL-001 migration.
+- Current task: GH-001 — security review перед публичной загрузкой исходников; POL-001 — independent review после GREEN.
 - Working directory: vps-gateway-next; код вне этой папки в прежнем snapshot не менять.
 - Target: Noobzzor/awg-manager-new, main, public. В репозиторий не попадут реальные ключи, клиентские конфиги и старые raw logs.
 
 ## PROVEN
 
-Исходники и vendored зависимости перенесены из текущего dirty snapshot с проверкой SHA256 копий. Исторический no-product control воспроизвёл Docker --internal outside-subnet alias failure. Исторические transport/sniff focused RED и policy package GREEN существуют локально, но повтор в новой копии ещё не принят.
+Исходники и vendored зависимости перенесены из текущего dirty snapshot с проверкой SHA256 копий. В новой Linux-копии проходят orchestrator, configmerge, policy, forwarding и ingress package tests. Migration regression сначала RED, затем GREEN: active/disabled/pending, конфликты и повторный Bootstrap; validator/runtime merge после apply совпадают. Папка на GitHub создана: первый commit 4da0252482c8e4eb26d5d954fd63b6ab5e68c1e5 содержит девять documentation/license files; exact branch/folder/README readback выполнен. Исторический no-product control воспроизвёл Docker --internal outside-subnet alias failure.
 
 ## NOT PROVEN
 
-Новая копия ещё не прошла Linux regression tests. Slot migration не реализована. Живой domain sniff control не выполнен. Исправленная DIRECT fixture и reply path не доказаны. VPN/WARP/multi-client/failure/restart/remote VPS functional gates открыты. Publish на GitHub пока не выполнен.
+Полная новая кодовая база пока не опубликована: secret scanner дал 80 hits (68 unique locations) в тестовых/mock данных; их синтетичность проверяется независимо, непроверенные значения в public repo не загружаются. Migration ещё проходит independent review; общий gate не закрыт. Живой domain sniff control не выполнен. Исправленная DIRECT fixture и reply path не доказаны. VPN/WARP/multi-client/failure/restart/remote VPS functional gates открыты.
 
 ## Следующий шаг
 
-Secret scan -> scoped publish/readback -> POL-001 RED/GREEN -> policy/merge/forwarding package gates -> POL-002 rule-engine control -> NET-001 fixture control и single-client E2E.
+Security review/sanitization -> scoped source publish/readback; migration review/fix wave при необходимости -> POL-002 rule-engine control -> NET-001 fixture control и single-client E2E.
 
 ## Чего не делать
 

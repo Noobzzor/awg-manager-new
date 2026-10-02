@@ -1,0 +1,195 @@
+<script lang="ts">
+	import {
+		CircleSlash,
+		Globe,
+		Sparkles,
+		Film,
+		Gamepad2,
+		ShieldCheck,
+		ShieldAlert,
+		Cpu,
+		EyeOff,
+		Lock,
+		BriefcaseBusiness,
+		ShieldOff,
+		GlobeLock,
+	} from 'lucide-svelte';
+	import NdmsIconTile from '$lib/components/ui/NdmsIconTile.svelte';
+	import { brandIcons } from '$lib/generated/brandIcons';
+	import { getPresetInlineIcon, type ServiceIconConfig } from '$lib/utils/service-icons';
+	import { resolveNeutralServiceIconStyle } from '$lib/utils/ndms-card-icon-style';
+	import { settingsSectionIconMode } from '$lib/stores/settingsSectionIconMode';
+	import LetterIconTile from '$lib/components/dnsroutes/LetterIconTile.svelte';
+
+	interface Props {
+		slug?: string;
+		size?: number;
+		/** Used for letter monogram when slug has no brand/inline art. */
+		label?: string;
+	}
+	let { slug, size = 36, label = '' }: Props = $props();
+
+	interface BrandIconResolved {
+		kind: 'brand';
+		path: string;
+		hex: string;
+		viewBox: string;
+		pathFill: string;
+		innerScale?: number;
+		fillRule?: 'evenodd' | 'nonzero';
+	}
+
+	interface LucideIcon {
+		kind: 'lucide';
+		component: typeof CircleSlash;
+		bg: string;
+	}
+
+	interface InlineIcon {
+		kind: 'inline';
+		config: ServiceIconConfig;
+	}
+
+	type ResolvedIcon = BrandIconResolved | LucideIcon | InlineIcon | null;
+
+	const lucideMap: Record<string, { component: typeof CircleSlash; bg: string }> = {
+		'lucide-circle-slash': { component: CircleSlash, bg: '#dc2626' },
+		'lucide-globe': { component: Globe, bg: '#22c55e' },
+		'lucide-sparkles': { component: Sparkles, bg: '#8b5cf6' },
+		'lucide-film': { component: Film, bg: '#ec4899' },
+		'lucide-gamepad-2': { component: Gamepad2, bg: '#14b8a6' },
+		'lucide-shield-check': { component: ShieldCheck, bg: '#3b82f6' },
+		'lucide-shield-alert': { component: ShieldAlert, bg: '#dc2626' },
+		'lucide-cpu': { component: Cpu, bg: '#dc2626' },
+		'lucide-eye-off': { component: EyeOff, bg: '#dc2626' },
+		'lucide-lock': { component: Lock, bg: '#64748b' },
+		'lucide-briefcase-business': { component: BriefcaseBusiness, bg: '#0a66c2' },
+		'lucide-shield-off': { component: ShieldOff, bg: '#dc2626' },
+		'lucide-globe-lock': { component: GlobeLock, bg: '#64748b' },
+	};
+
+	const resolved = $derived.by((): ResolvedIcon => {
+		if (!slug) return null;
+		const inline = getPresetInlineIcon(slug);
+		if (inline) {
+			return { kind: 'inline', config: inline };
+		}
+		const lucide = lucideMap[slug];
+		if (lucide) {
+			return { kind: 'lucide', component: lucide.component, bg: lucide.bg };
+		}
+		const brand = brandIcons[slug];
+		if (brand) {
+			return {
+				kind: 'brand',
+				path: brand.path,
+				hex: '#' + brand.hex,
+				viewBox: brand.viewBox ?? '0 0 24 24',
+				pathFill: brand.pathFill ? '#' + brand.pathFill : '#ffffff',
+				innerScale: brand.innerScale,
+				fillRule: brand.fillRule,
+			};
+		}
+		return null;
+	});
+
+	const brandInnerSize = $derived.by(() => {
+		if (resolved?.kind !== 'brand') return 0;
+		if (resolved.innerScale != null) return size * resolved.innerScale;
+		return resolved.viewBox === '0 0 24 24' ? size * 0.56 : size * 0.88;
+	});
+
+	const inlineInnerSize = $derived.by(() => {
+		if (resolved?.kind !== 'inline') return 0;
+		const cfg = resolved.config;
+		if (cfg.assetSrc && cfg.assetFit === 'cover') return size;
+		return Math.round(size * (cfg.scale ?? 0.56));
+	});
+
+	const neutralGlobeStyle = $derived(resolveNeutralServiceIconStyle($settingsSectionIconMode));
+	const isNeutralGlobeLucide = $derived(
+		resolved?.kind === 'lucide' &&
+			(slug === 'lucide-globe' || slug === 'lucide-globe-lock'),
+	);
+</script>
+
+{#if isNeutralGlobeLucide && resolved?.kind === 'lucide'}
+	{@const Component = resolved.component}
+	<NdmsIconTile
+		background={neutralGlobeStyle.background}
+		foreground={neutralGlobeStyle.foreground}
+		{size}
+	>
+		<Component size={Math.floor(size * 0.56)} color="currentColor" strokeWidth={1.75} />
+	</NdmsIconTile>
+{:else}
+<div class="icon-box" style="width:{size}px;height:{size}px">
+	{#if resolved === null}
+		<LetterIconTile label={label || slug || '?'} {size} />
+	{:else if resolved.kind === 'brand'}
+		<div class="brand" style="background:{resolved.hex}">
+			<svg
+				viewBox={resolved.viewBox}
+				width={brandInnerSize}
+				height={brandInnerSize}
+				xmlns="http://www.w3.org/2000/svg"
+			>
+				<path
+					d={resolved.path}
+					fill={resolved.pathFill}
+					fill-rule={resolved.fillRule ?? 'nonzero'}
+				/>
+			</svg>
+		</div>
+	{:else if resolved.kind === 'lucide'}
+		{@const Component = resolved.component}
+		<div class="brand" style="background:{resolved.bg}">
+			<Component size={Math.floor(size * 0.56)} color="white" strokeWidth={1.75} />
+		</div>
+	{:else if resolved.kind === 'inline'}
+		<div class="brand" style="background:{resolved.config.background}">
+			{#if resolved.config.assetSrc}
+				<img
+					class="asset"
+					class:cover={resolved.config.assetFit === 'cover'}
+					src={resolved.config.assetSrc}
+					alt=""
+					width={inlineInnerSize}
+					height={inlineInnerSize}
+					style:filter={resolved.config.assetFilter ?? 'none'}
+				/>
+			{:else}
+				<svg
+					viewBox={resolved.config.viewBox ?? '0 0 24 24'}
+					width={inlineInnerSize}
+					height={inlineInnerSize}
+				>
+					{@html resolved.config.svg ?? ''}
+				</svg>
+			{/if}
+		</div>
+	{/if}
+</div>
+{/if}
+
+<style>
+	.icon-box {
+		flex-shrink: 0;
+	}
+	.brand {
+		width: 100%;
+		height: 100%;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.brand .asset {
+		object-fit: contain;
+	}
+	.brand .asset.cover {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+</style>

@@ -1,0 +1,298 @@
+// internal/singbox/awgoutbounds/catalog_test.go
+package awgoutbounds
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// fakeAWGStore is the in-test stand-in for storage.AWGTunnelStore.
+type fakeAWGStore struct {
+	tunnels []AWGTunnelInfo
+	err     error
+}
+
+func (f *fakeAWGStore) List(ctx context.Context) ([]AWGTunnelInfo, error) {
+	return f.tunnels, f.err
+}
+
+// fakeSystemStore is the stand-in for SystemTunnelQuery.
+type fakeSystemStore struct {
+	tunnels []SystemTunnelInfo
+	err     error
+}
+
+func (f *fakeSystemStore) List(ctx context.Context) ([]SystemTunnelInfo, error) {
+	return f.tunnels, f.err
+}
+
+// fakeIfaceResolver mocks the kernel-iface lookup. Returns "" for unknown ids.
+type fakeIfaceResolver struct {
+	byID map[string]string
+}
+
+func (f *fakeIfaceResolver) GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error) {
+	v, ok := f.byID[tunnelID]
+	if !ok {
+		return "", errors.New("not found")
+	}
+	return v, nil
+}
+
+// makeIfacePresent creates /sys/class/net/<name>-style stubs in a temp
+// dir, then redirects ifaceExists' root via test override.
+func makeIfacePresent(t *testing.T, names ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, n := range names {
+		if err := os.MkdirAll(filepath.Join(root, n), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", n, err)
+		}
+	}
+	return root
+}
+
+func TestEnumerate_ManagedOnly(t *testing.T) {
+	root := makeIfacePresent(t, "t2s0", "t2s1")
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels: &fakeAWGStore{tunnels: []AWGTunnelInfo{
+				{ID: "tunA", Name: "Home", BackendIface: "t2s0"},
+				{ID: "tunB", Name: "Work", BackendIface: "t2s1"},
+			}},
+		},
+		sysClassNet: root,
+	}
+	got, err := s.enumerate(context.Background())
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 entries, got %d (%+v)", len(got), got)
+	}
+	if got[0].Tag != "awg-tunA" || got[0].Iface != "t2s0" || got[0].Kind != "managed" {
+		t.Errorf("entry 0 wrong: %+v", got[0])
+	}
+}
+
+func TestEnumerate_SkipsMissingIface(t *testing.T) {
+	root := makeIfacePresent(t, "t2s0") // t2s1 deliberately missing
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels: &fakeAWGStore{tunnels: []AWGTunnelInfo{
+				{ID: "tunA", Name: "Home", BackendIface: "t2s0"},
+				{ID: "tunB", Name: "Work", BackendIface: "t2s1"},
+			}},
+		},
+		sysClassNet: root,
+	}
+	got, _ := s.enumerate(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("want 1 entry (only present iface), got %d", len(got))
+	}
+	if got[0].Iface != "t2s0" {
+		t.Errorf("expected t2s0, got %q", got[0].Iface)
+	}
+}
+
+func TestEnumerate_SkipsEmptyIface(t *testing.T) {
+	root := makeIfacePresent(t)
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels: &fakeAWGStore{tunnels: []AWGTunnelInfo{
+				{ID: "tunA", Name: "Home", BackendIface: ""},
+			}},
+		},
+		sysClassNet: root,
+	}
+	got, _ := s.enumerate(context.Background())
+	if len(got) != 0 {
+		t.Errorf("want 0 entries, got %d", len(got))
+	}
+}
+
+func TestEnumerate_SystemOnly(t *testing.T) {
+	root := makeIfacePresent(t, "Wireguard0")
+	s := &ServiceImpl{
+		deps: Deps{
+			SystemTunnels: &fakeSystemStore{tunnels: []SystemTunnelInfo{
+				{ID: "Wireguard0", InterfaceName: "Wireguard0", Description: "Office VPN"},
+			}},
+		},
+		sysClassNet: root,
+	}
+	got, _ := s.enumerate(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(got))
+	}
+	if got[0].Tag != "awg-sys-Wireguard0" || got[0].Kind != "system" || got[0].Label != "Office VPN" {
+		t.Errorf("system entry wrong: %+v", got[0])
+	}
+}
+
+// fakeManagedServers implements ManagedServersQuery for tests.
+type fakeManagedServers struct{ names []string }
+
+func (f *fakeManagedServers) ManagedServerInterfaceNames(ctx context.Context) []string {
+	return f.names
+}
+
+func TestEnumerate_SkipsManagedServerInterfaces(t *testing.T) {
+	root := makeIfacePresent(t, "nwg0", "nwg1")
+	svc := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels: &fakeAWGStore{},
+			SystemTunnels: &fakeSystemStore{tunnels: []SystemTunnelInfo{
+				{ID: "Wireguard0", InterfaceName: "nwg0", Description: "Our managed server"},
+				{ID: "Wireguard1", InterfaceName: "nwg1", Description: "User tunnel"},
+			}},
+			ManagedServers: &fakeManagedServers{names: []string{"nwg0"}},
+		},
+		sysClassNet: root,
+	}
+
+	got, err := svc.enumerate(context.Background())
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry (nwg1), got %d: %+v", len(got), got)
+	}
+	if got[0].Iface != "nwg1" {
+		t.Errorf("kept iface = %s, want nwg1", got[0].Iface)
+	}
+}
+
+func TestEnumerate_ManagedServersNilFilter(t *testing.T) {
+	// ManagedServers == nil must not crash and must not filter anything.
+	root := makeIfacePresent(t, "nwg0")
+	svc := &ServiceImpl{
+		deps: Deps{
+			SystemTunnels: &fakeSystemStore{tunnels: []SystemTunnelInfo{
+				{ID: "Wireguard0", InterfaceName: "nwg0", Description: "Any"},
+			}},
+			ManagedServers: nil,
+		},
+		sysClassNet: root,
+	}
+	got, err := svc.enumerate(context.Background())
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+}
+
+func TestEnumerate_SkipsAWGMDescriptionPrefix(t *testing.T) {
+	// Validates the description-prefix fallback filter: a system tunnel whose
+	// description starts with "AWGM" (the ManagedServerDescription prefix in
+	// internal/managed/types.go) must be excluded even when ManagedServers is
+	// nil (i.e., the interface-name set is empty / stale).
+	root := makeIfacePresent(t, "Wireguard1")
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels: &fakeAWGStore{},
+			SystemTunnels: &fakeSystemStore{tunnels: []SystemTunnelInfo{
+				{ID: "Wireguard1", InterfaceName: "Wireguard1", Description: "AWGM WG Server"},
+			}},
+			ManagedServers: nil, // confirm fallback alone catches it
+		},
+		sysClassNet: root,
+	}
+	out, err := s.enumerate(context.Background())
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("expected 0 entries (server-side WG must be filtered by description prefix), got %d: %+v", len(out), out)
+	}
+}
+
+func TestEnumerate_DedupBySystemAlsoManaged(t *testing.T) {
+	root := makeIfacePresent(t, "nwg0")
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels: &fakeAWGStore{tunnels: []AWGTunnelInfo{
+				{ID: "tunA", Name: "NWG-managed", BackendIface: "nwg0"},
+			}},
+			SystemTunnels: &fakeSystemStore{tunnels: []SystemTunnelInfo{
+				{ID: "Wireguard0", InterfaceName: "nwg0", Description: "Same iface"},
+			}},
+		},
+		sysClassNet: root,
+	}
+	got, _ := s.enumerate(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("want 1 (managed wins, system deduped), got %d (%+v)", len(got), got)
+	}
+	if got[0].Kind != "managed" {
+		t.Errorf("expected managed entry to win dedup, got %+v", got[0])
+	}
+}
+
+// DNS туннеля доезжает до записи готовым IP: берётся первый IPv4
+// списка, не-IP и пустой список дают "" (подставится fallback).
+func TestEnumerate_ResolverFromTunnelDNS(t *testing.T) {
+	root := makeIfacePresent(t, "t2s0", "t2s1", "t2s2", "t2s3", "Wireguard0")
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels: &fakeAWGStore{tunnels: []AWGTunnelInfo{
+				{ID: "tunA", BackendIface: "t2s0", DNS: "10.8.0.1, 1.0.0.1"},
+				{ID: "tunB", BackendIface: "t2s1", DNS: ""},
+				{ID: "tunC", BackendIface: "t2s2", DNS: "dns.example.com"},
+				{ID: "tunD", BackendIface: "t2s3", DNS: "example.com, 9.9.9.9"},
+			}},
+			SystemTunnels: &fakeSystemStore{tunnels: []SystemTunnelInfo{
+				{ID: "Wireguard0", InterfaceName: "Wireguard0"},
+			}},
+		},
+		sysClassNet: root,
+	}
+	got, err := s.enumerate(context.Background())
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	// Системный туннель DNS не несёт — у его записи Resolver пуст.
+	want := map[string]string{
+		"awg-tunA":           "10.8.0.1",
+		"awg-tunB":           "",
+		"awg-tunC":           "",
+		"awg-tunD":           "9.9.9.9",
+		"awg-sys-Wireguard0": "",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("want %d entries, got %d (%+v)", len(want), len(got), got)
+	}
+	for _, e := range got {
+		if e.Resolver != want[e.Tag] {
+			t.Errorf("%s: Resolver = %q, want %q", e.Tag, e.Resolver, want[e.Tag])
+		}
+	}
+}
+
+// Из списка DNS для sing-box берётся первый IPv4; IPv6 идёт в дело
+// только когда IPv4 в списке нет вовсе.
+func TestFirstIP_PrefersIPv4(t *testing.T) {
+	tests := []struct {
+		name string
+		dns  string
+		want string
+	}{
+		{"v6 перед v4", "2606:4700::1111, 1.1.1.1", "1.1.1.1"},
+		{"только v6", "2606:4700::1111, 2001:4860:4860::8888", "2606:4700::1111"},
+		{"мусор перед v4", "dns.example.com, , 9.9.9.9", "9.9.9.9"},
+		{"пусто", "", ""},
+		{"без IP", "dns.example.com", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := firstIP(tt.dns); got != tt.want {
+				t.Errorf("firstIP(%q) = %q, want %q", tt.dns, got, tt.want)
+			}
+		})
+	}
+}

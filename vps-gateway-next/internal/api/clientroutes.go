@@ -1,0 +1,201 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/hoaxisr/awg-manager/internal/clientroute"
+	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/response"
+)
+
+// ── Response DTOs ────────────────────────────────────────────────
+
+// ClientRouteDTO mirrors frontend ClientRoute.
+type ClientRouteDTO struct {
+	ID             string `json:"id" example:"cr_001"`
+	ClientIp       string `json:"clientIp" example:"192.168.1.100"`
+	ClientHostname string `json:"clientHostname" example:"My-Phone"`
+	TunnelId       string `json:"tunnelId" example:"tun_abc123"`
+	Fallback       string `json:"fallback" example:"drop"`
+	Enabled        bool   `json:"enabled" example:"true"`
+}
+
+// ClientRoutesListResponse is the envelope for GET /client-routes.
+type ClientRoutesListResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Data    []ClientRouteDTO `json:"data"`
+}
+
+// ClientRouteToggleData is the payload of POST /client-routes/toggle.
+type ClientRouteToggleData struct {
+	ID      string `json:"id" example:"cr_001"`
+	Enabled bool   `json:"enabled" example:"true"`
+}
+
+// ClientRouteHandler handles client route CRUD operations.
+type ClientRouteHandler struct {
+	svc clientroute.Service
+	bus *events.Bus
+}
+
+// SetEventBus sets the event bus for SSE publishing.
+func (h *ClientRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// publishClientRoutesUpdated posts a resource:invalidated hint so
+// clients refetch the client-routes list.
+func (h *ClientRouteHandler) publishClientRoutesUpdated(reason string) {
+	h.bus.PublishInvalidated(events.ResourceRoutingClientRoutes, reason)
+}
+
+// NewClientRouteHandler creates a new client route handler.
+func NewClientRouteHandler(svc clientroute.Service) *ClientRouteHandler {
+	return &ClientRouteHandler{svc: svc}
+}
+
+// HandleList returns all client routes.
+// GET /api/client-routes
+//
+//	@Summary		List client routes
+//	@Tags			client-routes
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ClientRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/client-routes [get]
+//	@Router			/routing/client-routes [get]
+func (h *ClientRouteHandler) HandleList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	routes, err := h.svc.List()
+	if err != nil {
+		response.Error(w, err.Error(), "LIST_FAILED")
+		return
+	}
+	response.Success(w, response.MustNotNil(routes))
+}
+
+// HandleCreate creates a new client route.
+// POST /api/client-routes/create
+// Body: ClientRoute JSON
+//
+//	@Summary		Create client route
+//	@Tags			client-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=ClientRouteDTO}
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/client-routes/create [post]
+func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
+	route, ok := parseJSON[clientroute.ClientRoute](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	created, err := h.svc.Create(r.Context(), route)
+	if err != nil {
+		response.Error(w, err.Error(), "CREATE_FAILED")
+		return
+	}
+	response.Success(w, created)
+	h.publishClientRoutesUpdated("create")
+}
+
+// HandleUpdate updates an existing client route.
+// POST /api/client-routes/update?id=xxx
+// Body: ClientRoute JSON
+//
+//	@Summary		Update client route
+//	@Tags			client-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Route id"
+//	@Success		200	{object}	APIEnvelope{data=ClientRouteDTO}
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/client-routes/update [post]
+func (h *ClientRouteHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	route, ok := parseJSON[clientroute.ClientRoute](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	id, ok := requireQueryID(w, r)
+	if !ok {
+		return
+	}
+	route.ID = id
+	updated, err := h.svc.Update(r.Context(), route)
+	if err != nil {
+		response.Error(w, err.Error(), "UPDATE_FAILED")
+		return
+	}
+	response.Success(w, updated)
+	h.publishClientRoutesUpdated("update")
+}
+
+// HandleDelete deletes a client route.
+// POST /api/client-routes/delete?id=xxx
+//
+//	@Summary		Delete client route
+//	@Tags			client-routes
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Route id"
+//	@Success		200	{object}	OkResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/client-routes/delete [post]
+func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	id, ok := requireQueryID(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.Delete(r.Context(), id); err != nil {
+		response.Error(w, err.Error(), "DELETE_FAILED")
+		return
+	}
+	response.Success(w, map[string]bool{"ok": true})
+	h.publishClientRoutesUpdated("delete")
+}
+
+// HandleToggle enables or disables a client route.
+// POST /api/client-routes/toggle?id=xxx
+// Body: {"enabled": bool}
+//
+//	@Summary		Toggle client route
+//	@Tags			client-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Route id"
+//	@Success		200	{object}	APIEnvelope{data=ClientRouteToggleData}
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/client-routes/toggle [post]
+func (h *ClientRouteHandler) HandleToggle(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	id, ok := requireQueryID(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.SetEnabled(r.Context(), id, req.Enabled); err != nil {
+		response.Error(w, err.Error(), "TOGGLE_FAILED")
+		return
+	}
+	response.Success(w, map[string]interface{}{
+		"id":      id,
+		"enabled": req.Enabled,
+	})
+	h.publishClientRoutesUpdated("toggle")
+}

@@ -1,0 +1,527 @@
+package orchestrator
+
+// decide takes an event and current state, returns actions to execute.
+// Без I/O. Единственная мутация состояния здесь — пометка «бут не состоялся»
+// в decideBoot/decideReconnect: решать это обязан владелец состояния, иначе
+// обязанность снова уезжает вызывающему (ровно так и появился F194).
+func decide(event Event, state *State) []Action {
+	switch event.Type {
+	case EventBoot:
+		return decideBoot(event, state)
+	case EventReconnect:
+		return decideReconnect(state)
+	case EventStart:
+		return decideStart(event, state)
+	case EventStop:
+		return decideStop(event, state)
+	case EventDelete:
+		return decideDelete(event, state)
+	case EventRestart:
+		return decideRestart(event, state)
+	case EventNDMSHook:
+		return decideNDMSHook(event, state)
+	case EventWANUp:
+		return decideWANUp(event, state)
+	case EventWANDown:
+		return decideWANDown(event, state)
+	case EventQuiesce:
+		return decideQuiesce(state)
+	default:
+		return nil
+	}
+}
+
+func decideBoot(event Event, state *State) []Action {
+	// WAN не поднят — бута не будет: стартовать туннели некуда, а приводить
+	// маршруты бессмысленно. Отмечаем, что бут ДОЛЖЕН состояться, и первое
+	// WAN-событие отработает за него (HandleEvent). Решение принимает тот,
+	// кто владеет состоянием, а не вызывающий отдельным методом.
+	if !event.WANUp {
+		state.bootPending = true
+		return nil
+	}
+	state.bootPending = false
+
+	var actions []Action
+
+	for _, t := range state.tunnels {
+		if !t.Enabled {
+			continue
+		}
+
+		switch t.Backend {
+		case "kernel":
+			// If process is already running (e.g., daemon restart, not router reboot),
+			// reconcile around it. Otherwise cold start from scratch.
+			if t.Running {
+				actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
+			} else {
+				actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+			}
+			actions = appendPostStartActions(actions, t)
+
+		case "nativewg":
+			if t.Obfuscated {
+				actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+			} else if !state.supportsASC || t.ViaProxy {
+				// Reconcile-to-desired instead of unconditional Stop+Start:
+				// the executor skips the disruptive restart when the tunnel
+				// is already running WITH a handshake, and still re-attaches
+				// the proxy for the #183 case (NDMS brought the interface up
+				// without our kmod proxy → conf=running but no handshake).
+				actions = append(actions, Action{Type: ActionReconcileNativeWG, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+			} else if t.EndpointMayV6 {
+				// На ASC-прошивке NDMS сам поднимает интерфейс из своего
+				// конфига, и для v4-литерала это самодостаточно (boot ничего
+				// не делает намеренно). Для v6-литерала и hostname'а (мог
+				// резолвиться в v6 — например DDNS только с AAAA) конфиг
+				// NDMS может нести заглушку 127.0.0.1:1 — реальный endpoint
+				// жил только в ядре и после ребута роутера потерян. Полный
+				// Start возвращает его (wg set) и заново регистрирует
+				// endpoint-страж; для hostname→v4 Start безвреден — тот же
+				// resync, что decideReconnect делает для работающих.
+				actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+			}
+		}
+	}
+
+	actions = append(actions,
+		Action{Type: ActionReconcileStaticRoutes},
+		Action{Type: ActionReconcileDNSRoutes},
+	)
+
+	return actions
+}
+
+func decideReconnect(state *State) []Action {
+	// Реконнект поднимает включённые туннели и приводит маршруты — то есть
+	// делает работу бута. Пометка «бут не состоялся» после него не нужна:
+	// оставить её значит однажды выстрелить полным бутом на ровном месте
+	// (этот путь живёт и в середине жизни демона — quiesce/resume бэкапа).
+	//
+	// Но только при поднятом WAN. Сам реконнект WAN не проверяет вовсе, и на
+	// загрузке с лежащим WAN экспорт бэкапа (quiesce → resume) снимал бы
+	// пометку, ничего при этом не подняв: отложенный бут терялся, а настоящий
+	// WAN-up получал уже обычный decideWANUp.
+	if state.anyWANUp() {
+		state.bootPending = false
+	}
+
+	var actions []Action
+
+	actions = append(actions, Action{Type: ActionRestoreEndpointTracking})
+
+	for _, t := range state.tunnels {
+		if t.Running {
+			switch t.Backend {
+			case "kernel":
+				// Re-apply NDMS config, firewall, routing around the running process.
+				actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
+			case "nativewg":
+				if t.Obfuscated {
+					actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+					actions = appendPostStartActions(actions, t)
+				} else if state.supportsASC && !t.ViaProxy {
+					// KeenOS 5+ ASC mode has no kmod proxy to restore. A running
+					// NativeWG interface may still need a full resync after awgm
+					// restart/update so ASC bindings, routes and persistence are
+					// refreshed without first dropping NDMS to conf=disabled.
+					actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+					actions = appendPostStartActions(actions, t)
+				} else {
+					// KeenOS 4 proxy/kmod mode is more sensitive: the NDMS
+					// interface is already running, so a full Start can flap the
+					// interface and trigger repeated restart hooks. Restore only
+					// the proxy slot and peer endpoint around the live tunnel.
+					actions = append(actions, Action{Type: ActionRestoreKmod, Tunnel: t.ID})
+					if t.PingCheck != nil && t.PingCheck.Enabled {
+						actions = append(actions, Action{Type: ActionStartMonitoring, Tunnel: t.ID})
+					}
+				}
+			}
+
+			// NativeWG monitoring is handled inside the backend-specific branch above.
+			if t.Backend == "nativewg" {
+				continue
+			}
+			if t.PingCheck != nil && t.PingCheck.Enabled {
+				actions = append(actions, Action{Type: ActionStartMonitoring, Tunnel: t.ID})
+			}
+			continue
+		}
+
+		// Reconnect after daemon reinstall/restart: an enabled tunnel may no
+		// longer be running. Bring it back just like on boot.
+		if !t.Enabled {
+			continue
+		}
+		switch t.Backend {
+		case "kernel":
+			actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
+		case "nativewg":
+			// Reconnect must restore desired state from storage regardless of
+			// ASC support. After daemon reinstall/restart, an enabled NativeWG
+			// tunnel may be down and NDMS might not emit a fresh conf=running
+			// edge by itself, so we explicitly start it.
+			actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
+		}
+	}
+
+	actions = append(actions,
+		Action{Type: ActionReconcileStaticRoutes},
+		Action{Type: ActionReconcileDNSRoutes},
+	)
+
+	return actions
+}
+
+func decideStart(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil || t.Running {
+		return nil
+	}
+
+	var actions []Action
+
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+	}
+
+	actions = appendPostStartActions(actions, t)
+	return actions
+}
+
+func decideStop(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil {
+		return nil
+	}
+	// Note: we deliberately do NOT guard on !t.Running here.
+	// A tunnel can be in NeedsStart (NDMS intent up, our process not yet
+	// running — typical after router reboot when auto-start hasn't fired
+	// or has failed). User clicks Stop to cancel that intent. All actions
+	// below are idempotent, and decideNDMSHook("disabled") still guards
+	// on !t.Running before calling us, so this won't fire phantom stops
+	// from external NDMS hooks.
+
+	var actions []Action
+
+	// Stop monitoring first
+	if t.Monitoring {
+		actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
+	}
+
+	// Remove NDMS ping-check profile (NativeWG only)
+	if t.Backend == "nativewg" && t.PingCheck != nil && t.PingCheck.Enabled {
+		actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
+	}
+
+	// Stop tunnel
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionStopKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionStopNativeWG, Tunnel: t.ID})
+	}
+
+	// Remove routing
+	actions = append(actions,
+		Action{Type: ActionRemoveStaticRoutes, Tunnel: t.ID},
+		Action{Type: ActionRemoveClientRoutes, Tunnel: t.ID},
+	)
+
+	// Persist stopped state
+	actions = append(actions, Action{Type: ActionPersistStopped, Tunnel: t.ID})
+
+	return actions
+}
+
+func decideNDMSHook(event Event, state *State) []Action {
+	if event.Layer != "conf" {
+		return nil
+	}
+
+	t := state.findByNDMSName(event.NDMSName)
+	if t == nil {
+		return nil
+	}
+
+	switch event.Level {
+	case "running":
+		// A conf=running edge that reaches decide is genuinely external —
+		// self-induced ones (our own Start) are filtered upstream by
+		// consumeExpectedHook. So an external enable (router web UI, manual
+		// NDMS toggle) must start the tunnel even when our store says
+		// Enabled=false: the user's "on" intent wins, and decideStart's
+		// ActionPersistRunning re-syncs Enabled=true. We deliberately do NOT
+		// guard on !t.Enabled here (issue #183 — router-UI enable left a
+		// NativeWG interface up but without its kmod proxy → dead handshake).
+		if t.Running || !state.anyWANUp() {
+			return nil
+		}
+		return decideStart(Event{Type: EventStart, Tunnel: t.ID}, state)
+
+	case "disabled":
+		if !t.Running {
+			return nil
+		}
+		// Boot-quiescence: ignore a transient conf=disabled that arrives while
+		// we are still bringing this tunnel up. NDMS emits its own disabled→
+		// running churn as it settles its WireGuard; acting on it here tears
+		// down a tunnel we just started (observed at boot: tunnel handshakes,
+		// then a stray disabled kills it ~1s later).
+		if !event.Now.IsZero() && event.Now.Before(t.quiescentUntil) {
+			return nil
+		}
+		// Outside the quiescence window, treat conf=disabled as user intent and stop.
+		return decideStop(Event{Type: EventStop, Tunnel: t.ID}, state)
+	}
+
+	return nil
+}
+
+func decideWANUp(event Event, state *State) []Action {
+	var actions []Action
+
+	for _, t := range state.tunnels {
+		if !t.Enabled {
+			continue
+		}
+		if !canStartOnWAN(t, event.WANIface) {
+			continue
+		}
+
+		switch t.Backend {
+		case "kernel":
+			if t.Running {
+				// Was suspended on WAN down. Choice depends on bind mode:
+				// - Explicit bind (ISPInterface=="ethX"): Resume — same WAN came back, link up is enough.
+				// - Auto mode (ISPInterface==""): Reconcile — different WAN may be available now,
+				//   need to re-resolve WAN and refresh endpoint route via the new WAN.
+				if t.ISPInterface == "" {
+					actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
+				} else {
+					actions = append(actions, Action{Type: ActionResumeKernel, Tunnel: t.ID})
+				}
+			} else {
+				// Stopped — start from scratch.
+				actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+			}
+
+		case "nativewg":
+			if t.Obfuscated {
+				// Полный Start переставит host-route на новый WAN — ASC-ветка
+				// ниже делает continue, но NDMS наш host-route не двигает.
+				actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+				continue
+			}
+			if state.supportsASC && !t.ViaProxy {
+				continue // NDMS handles failover natively via ASC on >= 5.01.A.3
+			}
+			// Skip only when actively running on a DIFFERENT WAN (multi-WAN:
+			// alternate iface just came up — don't churn a healthy tunnel).
+			// After SuspendProxy the tunnel keeps Running=true on purpose
+			// (orchestrator.updateState) AND ActiveWAN matches the iface
+			// that went down — so when that same iface comes back up
+			// (t.ActiveWAN == event.WANIface) we resume via StartNativeWG.
+			// Without this, the tunnel hangs in conf=running, link=false,
+			// peer=false after a single-WAN flap until the user manually
+			// toggles Disable→Enable (KN-1910 NDMS 5.0.11 bug-report).
+			if t.Running && t.ActiveWAN != event.WANIface {
+				continue
+			}
+			actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
+		}
+	}
+
+	return actions
+}
+
+func decideWANDown(event Event, state *State) []Action {
+	var actions []Action
+	var nwgSuspended []string
+
+	for _, t := range state.tunnels {
+		if !t.Enabled || !t.Running {
+			continue
+		}
+		if !affectedByWANDown(t, event.WANIface) {
+			continue
+		}
+
+		switch t.Backend {
+		case "kernel":
+			actions = append(actions, Action{Type: ActionSuspendKernel, Tunnel: t.ID})
+
+		case "nativewg":
+			if t.Obfuscated {
+				// Слота нет (нечего SuspendProxy) и Stop не нужен: WAN упал —
+				// host-route мёртв вместе с ним, поднимется на WAN-up.
+				continue
+			}
+			if state.supportsASC && !t.ViaProxy {
+				continue // ASC handles failover natively
+			}
+			actions = append(actions, Action{Type: ActionSuspendProxy, Tunnel: t.ID})
+			nwgSuspended = append(nwgSuspended, t.ID)
+		}
+	}
+
+	// Immediate failover for NativeWG (without ASC): restart suspended tunnels
+	// if another WAN is available. Kernel tunnels stay suspended until
+	// WANUp event resumes them.
+	if len(nwgSuspended) > 0 && state.anyWANUp() {
+		for _, id := range nwgSuspended {
+			t := state.tunnels[id]
+			actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
+		}
+	}
+
+	return actions
+}
+
+// affectedByWANDown returns true if the tunnel is affected by a WAN going down.
+// Auto mode (ISPInterface=""): affected if ActiveWAN matches the downed WAN.
+// Explicit binding: affected if ISPInterface matches the downed WAN.
+func affectedByWANDown(t *tunnelState, wanIface string) bool {
+	if t.ISPInterface == "" {
+		return t.ActiveWAN == wanIface
+	}
+	return t.ISPInterface == wanIface
+}
+
+// canStartOnWAN returns true if the tunnel can start when the given WAN comes up.
+// Auto mode: can start on any WAN.
+// Explicit binding: can only start when its specific WAN comes up.
+func canStartOnWAN(t *tunnelState, wanIface string) bool {
+	if t.ISPInterface == "" {
+		return true
+	}
+	return t.ISPInterface == wanIface
+}
+
+func decideDelete(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil {
+		return nil
+	}
+
+	var actions []Action
+
+	// Stop monitoring
+	if t.Monitoring {
+		actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
+	}
+
+	// Remove NDMS ping-check profile if running NativeWG
+	if t.Running && t.Backend == "nativewg" && t.PingCheck != nil && t.PingCheck.Enabled {
+		actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
+	}
+
+	// Remove all routing BEFORE deleting the NDMS interface.
+	// OnTunnelDelete cleans storage + removes NDMS routes while interface still exists.
+	actions = append(actions,
+		Action{Type: ActionDeleteDNSRoutes, Tunnel: t.ID},
+		Action{Type: ActionDeleteStaticRoutes, Tunnel: t.ID},
+		Action{Type: ActionDeleteClientRoutes, Tunnel: t.ID},
+	)
+
+	// Delete (operator handles stop-if-running internally)
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionDeleteKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionDeleteNativeWG, Tunnel: t.ID})
+	}
+
+	return actions
+}
+
+// decideQuiesce stops every running tunnel without persisting Enabled=false.
+// Used before full data-dir backup/restore so child processes and config files
+// are quiescent and ports in the archive match on-disk state.
+func decideQuiesce(state *State) []Action {
+	var actions []Action
+	for _, t := range state.tunnels {
+		if !t.Running {
+			continue
+		}
+		actions = appendQuiesceStopActions(actions, t)
+	}
+	return actions
+}
+
+func appendQuiesceStopActions(actions []Action, t *tunnelState) []Action {
+	if t.Monitoring {
+		actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
+	}
+	if t.Backend == "nativewg" && t.PingCheck != nil && t.PingCheck.Enabled {
+		actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
+	}
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionStopKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionStopNativeWG, Tunnel: t.ID})
+	}
+	return actions
+}
+
+func decideRestart(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil {
+		return nil
+	}
+
+	var actions []Action
+
+	// Stop phase (without PersistStopped — restart should not disable)
+	if t.Running {
+		actions = appendQuiesceStopActions(actions, t)
+		// NOTE: no ActionRemoveStaticRoutes/ClientRoutes — will be re-applied after start
+		// NOTE: no ActionPersistStopped — restart should not toggle Enabled flag
+	}
+
+	// Start phase
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+	}
+	actions = appendPostStartActions(actions, t)
+
+	return actions
+}
+
+// appendPostStartActions adds monitoring + routing actions after a tunnel start.
+func appendPostStartActions(actions []Action, t *tunnelState) []Action {
+	actions = append(actions,
+		Action{Type: ActionApplyDNSRoutes, Tunnel: t.ID},
+		Action{Type: ActionApplyStaticRoutes, Tunnel: t.ID, Iface: t.ifaceName()},
+		Action{Type: ActionApplyClientRoutes, Tunnel: t.ID, Iface: t.ifaceName()},
+	)
+
+	if t.PingCheck != nil && t.PingCheck.Enabled {
+		if t.Backend == "nativewg" {
+			actions = append(actions, Action{Type: ActionConfigurePingCheck, Tunnel: t.ID})
+		}
+		actions = append(actions, Action{Type: ActionStartMonitoring, Tunnel: t.ID})
+	}
+
+	actions = append(actions, Action{Type: ActionPersistRunning, Tunnel: t.ID})
+
+	return actions
+}

@@ -1,0 +1,61 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/hoaxisr/awg-manager/internal/response"
+)
+
+// ── Response DTOs ────────────────────────────────────────────────
+
+// HealthData is the response data for GET /health.
+type HealthData struct {
+	OK         bool   `json:"ok" example:"true"`
+	Version    string `json:"version" example:"2.5.0"`
+	InstanceID string `json:"instanceId" example:"b6c2ef8df6cf4b2782f8f45a7dc8e3a1"`
+}
+
+// HealthResponse is the envelope for GET /health.
+type HealthResponse struct {
+	Success bool       `json:"success" example:"true"`
+	Data    HealthData `json:"data"`
+}
+
+// HealthHandler serves GET /api/health. A cheap liveness check that
+// does no I/O, no NDMS calls — used by the frontend 5-second poller
+// to decide when to show the full-screen "backend offline" overlay
+// independently of SSE connection state.
+type HealthHandler struct {
+	version    string
+	instanceID string
+}
+
+// NewHealthHandler constructs a HealthHandler that reports the given
+// build version. The version is set via ldflags at build time and
+// propagated from cmd/awg-manager/main.go through server.Config.Version.
+func NewHealthHandler(version, instanceID string) *HealthHandler {
+	return &HealthHandler{version: version, instanceID: instanceID}
+}
+
+// ServeHTTP responds to GET with { ok: true, version: "...", instanceId: "..." }. Any
+// other method returns 405 Method Not Allowed.
+//
+//	@Summary		Health / liveness
+//	@Description	Cheap check for frontend pollers; no NDMS or I/O.
+//	@Tags			system
+//	@Produce		json
+//	@Success		200	{object}	HealthResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/health [get]
+func (h *HealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	response.Success(w, map[string]any{
+		"ok":         true,
+		"version":    h.version,
+		"instanceId": h.instanceID,
+	})
+}

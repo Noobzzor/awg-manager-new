@@ -1,0 +1,407 @@
+// Package kmod provides kernel module loading functionality.
+package kmod
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+)
+
+const (
+	// sysfsWaitTimeout is the max time to wait for sysfs entry after insmod.
+	sysfsWaitTimeout = 10 * time.Second
+	// sysfsWaitInterval is the polling interval for sysfs entry.
+	sysfsWaitInterval = 100 * time.Millisecond
+	// SysfsPath is the sysfs path for the kernel module.
+	SysfsPath = "/sys/module/" + ModuleName
+)
+
+// ModulesDir is the directory containing kernel modules.
+// It is a var (not const) to allow overriding in tests.
+var ModulesDir = "/opt/etc/awg-manager/modules"
+
+// BundledDir — каталог с .ko из IPK под конкретную модель. После выбора
+// нужного модуля каталог УДАЛЯЕТСЯ, поэтому он обязан считаться от текущего
+// ModulesDir, а не запоминаться при инициализации пакета: демон с другим
+// -data-dir иначе сносил бы боевой каталог (F168).
+func BundledDir() string { return filepath.Join(ModulesDir, "bundled") }
+
+const (
+	// ModuleName is the name of the kernel module.
+	ModuleName = "amneziawg"
+)
+
+// Loader handles kernel module loading operations.
+type Loader struct {
+	model      string // e.g. "KN-1010"
+	soc        SoC    // kept for backward compatibility
+	modulePath string
+
+	// Warn reports a condition worth surfacing in the app journal. nil = silent.
+	Warn func(msg string)
+}
+
+// New creates a new kernel module loader.
+// Reads model and SoC from cached NDMS info (ndmsinfo.Init must be called first).
+func New() *Loader {
+	model := DetectModel()
+	// NC-xxxx is equivalent to KN-xxxx — normalize so .ko file lookup
+	// and download URLs match (files are named amneziawg-KN-xxxx.ko).
+	model = strings.Replace(model, "NC-", "KN-", 1)
+	soc := DetectSoC()
+
+	l := &Loader{
+		model: model,
+		soc:   soc,
+	}
+
+	// Resolve module path:
+	// 1. New flat path first (downloaded per-model modules)
+	// 2. Old SoC-based path as fallback (upgrading from bundled IPK)
+	newPath := filepath.Join(ModulesDir, "amneziawg.ko")
+	if _, err := os.Stat(newPath); err == nil {
+		l.modulePath = newPath
+		return l
+	}
+	if soc != SoCUnknown {
+		oldPath := soc.ModulePath()
+		if _, err := os.Stat(oldPath); err == nil {
+			l.modulePath = oldPath
+		}
+	}
+
+	return l
+}
+
+// modelAlias maps hw_id to the model whose .ko file should be used.
+// This allows models with compatible kernels to share a single .ko file.
+//
+// Модули собираются под каждую модель отдельно, но результат совпадает у целых
+// групп: внутри группы одинаковы .text, .data, .rodata, .modinfo и vermagic, а
+// __versions пуста (CONFIG_MODVERSIONS выключен), то есть привязки к CRC
+// символов конкретного ядра нет. Разница между группами берётся из конфигурации
+// ядра, на которую смотрит патч hwnat: например, KN-1011 из-за неё отделяется от
+// соседей по mt7621. Поэтому в prebuilt/kmod лежит по одному файлу на группу, а
+// остальные модели ссылаются сюда — 46 файлов превращаются в 10, и mipsel-IPK
+// худеет с 5 МБ до 0.7 МБ.
+var modelAlias = map[string]string{
+	// aarch64: mt7981 (+ Hopper DSL и WBR3000UAX без своих файлов)
+	"KN-1012": "KN-3811",
+	"KN-2312": "KN-3811",
+	"KN-3812": "KN-3811",
+	"KN-3611": "KN-3811",
+	"KN-4110": "KN-3811",
+	// aarch64: mt7622
+	"KN-2710": "KN-1811",
+	// mipsel: mt7621 SMP
+	"KN-1010": "KN-1810",
+	"KN-1910": "KN-1810",
+	"KN-1913": "KN-1810",
+	"KN-2310": "KN-1810",
+	"KN-2311": "KN-1810",
+	"KN-2610": "KN-1810",
+	"KN-2910": "KN-1810",
+	"kng_re":  "KN-1810", // Keenetic Giga III (MT7621ST)
+	"ku_rd":   "KN-1810", // Keenetic Ultra II (MT7621AT)
+	// mipsel: mt7628
+	"KN-1711": "KN-1710",
+	"KN-1713": "KN-1710",
+	"ki_rb":   "KN-1710", // Keenetic Extra II (MT7628)
+	"KN-1410": "KN-1212",
+	// mipsel: en7528
+	"KN-3810": "KN-1912",
+	// mips BE: en7512 и en7516
+	"KN-2110": "KN-2010",
+	"KN-2410": "KN-2112",
+	"KN-2510": "KN-2112",
+	"KN-3610": "KN-2112",
+}
+
+// knownSoCNames is the set of SoC directory names used by old bundled IPKs.
+var knownSoCNames = map[string]bool{
+	string(SoCMT7621): true,
+	string(SoCMT7628): true,
+	string(SoCEN7512): true,
+	string(SoCEN7516): true,
+	string(SoCEN7528): true,
+	string(SoCMT7622): true,
+	string(SoCMT7981): true,
+	string(SoCMT7988): true,
+}
+
+// CleanupLegacyModules removes old SoC-based module directories that don't
+// match this router's SoC. After upgrade from bundled IPK to per-model
+// downloads, stale directories for other architectures are left behind.
+// Returns the number of directories removed.
+func (l *Loader) CleanupLegacyModules() int {
+	entries, err := os.ReadDir(ModulesDir)
+	if err != nil {
+		return 0
+	}
+
+	removed := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !knownSoCNames[name] {
+			continue // not a SoC directory, leave it alone
+		}
+		if l.soc != SoCUnknown && name == string(l.soc) {
+			continue // matches this router's SoC, keep as fallback
+		}
+		if err := os.RemoveAll(filepath.Join(ModulesDir, name)); err == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
+// Model returns the detected router model string (e.g. "KN-1010").
+func (l *Loader) Model() string {
+	return l.model
+}
+
+// SoC returns the detected System-on-Chip type.
+func (l *Loader) SoC() SoC {
+	return l.soc
+}
+
+// ModulePath returns the path to the kernel module for this router.
+func (l *Loader) ModulePath() string {
+	return l.modulePath
+}
+
+// ModuleExists checks if the kernel module file exists on disk.
+func (l *Loader) ModuleExists() bool {
+	if l.modulePath == "" {
+		return false
+	}
+	_, err := os.Stat(l.modulePath)
+	return err == nil
+}
+
+// IsLoaded checks if the kernel module is currently loaded.
+func (l *Loader) IsLoaded() bool {
+	result, err := exec.Run(context.Background(), "lsmod")
+	if err != nil {
+		return false
+	}
+	// Check each line for module name
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == ModuleName {
+			return true
+		}
+	}
+	return false
+}
+
+// Load loads the kernel module using insmod and waits for sysfs registration.
+func (l *Loader) Load(ctx context.Context) error {
+	if l.modulePath == "" {
+		return fmt.Errorf("unknown SoC, cannot determine module path")
+	}
+	if !l.ModuleExists() {
+		return fmt.Errorf("module not found: %s", l.modulePath)
+	}
+	if _, err := exec.Run(ctx, "insmod", l.modulePath); err != nil {
+		return err
+	}
+	// Wait for sysfs entry to appear — insmod returns before sysfs is registered
+	return l.waitForSysfs(ctx)
+}
+
+// waitForSysfs polls for the sysfs module entry after insmod.
+func (l *Loader) waitForSysfs(ctx context.Context) error {
+	deadline := time.After(sysfsWaitTimeout)
+	ticker := time.NewTicker(sysfsWaitInterval)
+	defer ticker.Stop()
+
+	for {
+		if _, err := os.Stat(SysfsPath); err == nil {
+			return nil
+		}
+		select {
+		case <-deadline:
+			return fmt.Errorf("timeout waiting for %s after insmod", SysfsPath)
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// GetLoadError retrieves kernel messages related to module loading.
+// Useful for debugging when Load() fails.
+func (l *Loader) GetLoadError() string {
+	result, err := exec.Shell(context.Background(), "dmesg | grep -i amneziawg | tail -5")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(result.Stdout)
+}
+
+// OnDiskVersion returns the version string stored on disk, or "" if unknown.
+func (l *Loader) OnDiskVersion() string {
+	return readVersion()
+}
+
+// LoadedVersion returns the version of the module currently in the kernel, or
+// "" when it is not loaded. Unlike OnDiskVersion — our own bundle marker — this
+// is what the running module reports, which is what decides whether AWG 3.0
+// device params have any effect (they need the 3.x module).
+func (l *Loader) LoadedVersion() string {
+	data, err := os.ReadFile(filepath.Join(SysfsPath, "version"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// Unload removes the kernel module using rmmod.
+func (l *Loader) Unload(ctx context.Context) error {
+	_, err := exec.Run(ctx, "rmmod", ModuleName)
+	return err
+}
+
+// EnsureModule selects a bundled module (if available from IPK install/upgrade),
+// then loads the module via insmod if not already loaded.
+func (l *Loader) EnsureModule(ctx context.Context) error {
+	// Select from bundled (fresh install or upgrade)
+	l.selectBundledModule()
+
+	// Already loaded — done
+	if l.IsLoaded() {
+		return nil
+	}
+
+	// Module on disk — load it
+	if l.ModuleExists() {
+		return l.Load(ctx)
+	}
+
+	// No module available
+	if l.model == "" {
+		return fmt.Errorf("unknown router model")
+	}
+	return fmt.Errorf("no kernel module for model %s", l.model)
+}
+
+// selectBundledModule checks BundledDir for a per-model .ko matching this router,
+// copies it to ModulesDir/amneziawg.ko, writes the version file, and removes BundledDir.
+// This is a one-shot operation after IPK install/upgrade.
+func (l *Loader) selectBundledModule() {
+	entries, err := os.ReadDir(BundledDir())
+	if err != nil {
+		return // no bundled dir — normal restart
+	}
+
+	if l.model == "" {
+		// Can't select without knowing the model; leave bundled for next attempt
+		return
+	}
+
+	// Find amneziawg-{model}.ko, falling back to alias if defined.
+	// E.g. KN-4110 has no dedicated .ko but uses KN-3811's module.
+	koName := fmt.Sprintf("amneziawg-%s.ko", l.model)
+	var found string
+	for _, e := range entries {
+		if e.Name() == koName {
+			found = filepath.Join(BundledDir(), koName)
+			break
+		}
+	}
+	if found == "" {
+		if alias, ok := modelAlias[l.model]; ok {
+			aliasName := fmt.Sprintf("amneziawg-%s.ko", alias)
+			for _, e := range entries {
+				if e.Name() == aliasName {
+					found = filepath.Join(BundledDir(), aliasName)
+					break
+				}
+			}
+		}
+	}
+
+	if found == "" {
+		// No match for this model — clean up bundled dir anyway.
+		// Worth a line in the journal: the models dropped from the shipped set
+		// land here, and without it the router silently keeps whatever module
+		// it already has (or none at all on a fresh install).
+		if l.Warn != nil {
+			l.Warn(fmt.Sprintf("no bundled kernel module for model %s — kernel mode works only if a module is already installed", l.model))
+		}
+		os.RemoveAll(BundledDir())
+		return
+	}
+
+	// Copy bundled .ko → active module
+	targetPath := filepath.Join(ModulesDir, "amneziawg.ko")
+	if err := copyFile(found, targetPath); err != nil {
+		return
+	}
+
+	// Write version from bundled/version file
+	versionPath := filepath.Join(BundledDir(), "version")
+	if data, err := os.ReadFile(versionPath); err == nil {
+		_ = writeVersion(strings.TrimSpace(string(data)))
+	}
+
+	// Update module path
+	l.modulePath = targetPath
+
+	// Clean up — bundled dir no longer needed
+	os.RemoveAll(BundledDir())
+}
+
+// copyFile copies src to dst atomically (write to .tmp, fsync, then rename).
+// The fsync matters: the caller deletes the only source (BundledDir) right
+// after, so a power loss before writeback would otherwise leave a torn .ko
+// with no way to recover short of reinstalling the package.
+func copyFile(src, dst string) error {
+	// Каталог назначения может не существовать: с нестандартным -data-dir его
+	// никто не создаёт заранее, и без этого установка модуля молча не
+	// срабатывала (F168).
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	tmpPath := dst + ".tmp"
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(out, in)
+	if err == nil {
+		err = out.Sync()
+	}
+	closeErr := out.Close()
+	if err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if closeErr != nil {
+		os.Remove(tmpPath)
+		return closeErr
+	}
+
+	if err := os.Rename(tmpPath, dst); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}

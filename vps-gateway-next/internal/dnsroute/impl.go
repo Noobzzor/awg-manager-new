@@ -1,0 +1,1022 @@
+package dnsroute
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+)
+
+// InterfaceResolver resolves tunnel IDs to router interface names.
+// ResolveInterface returns the NDMS name (for RCI commands).
+// GetKernelIfaceName returns the kernel-level interface name (for HR Neo).
+type InterfaceResolver interface {
+	ResolveInterface(ctx context.Context, tunnelID string) (string, error)
+	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
+}
+
+// ServiceImpl implements the Service interface.
+// All operations are serialized via opMu to prevent race conditions between
+// concurrent HTTP handlers, background scheduler, and tunnel lifecycle hooks.
+type ServiceImpl struct {
+	opMu               sync.Mutex
+	dlMu               sync.RWMutex
+	store              *Store
+	queries            *query.Queries
+	commands           *command.Commands
+	resolver           InterfaceResolver
+	appLog             *logging.ScopedLogger
+	failover           *FailoverManager
+	hydra              *hydraroute.Service
+	policyOrchestrator policyOrchestrator
+	dl                 Downloader
+	// reconcileFn is overridden only by the local sing-box adapter, which
+	// performs one full-slot reconciliation after the legacy CRUD mutation.
+	// Keenetic construction leaves it nil and keeps the NDMS reconciler.
+	reconcileFn func(context.Context) error
+}
+
+type Downloader interface {
+	ReadAll(ctx context.Context, req SubscriptionDownloadRequest) ([]byte, SubscriptionDownloadMeta, error)
+}
+
+// NewService creates a new DNS route service.
+func NewService(store *Store, queries *query.Queries, commands *command.Commands, resolver InterfaceResolver, appLogger logging.AppLogger) *ServiceImpl {
+	return &ServiceImpl{
+		store:    store,
+		queries:  queries,
+		commands: commands,
+		resolver: resolver,
+		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubDnsRoute),
+	}
+}
+
+func (s *ServiceImpl) SetDownloader(d Downloader) {
+	s.dlMu.Lock()
+	defer s.dlMu.Unlock()
+	s.dl = d
+}
+
+func (s *ServiceImpl) downloader() Downloader {
+	s.dlMu.RLock()
+	defer s.dlMu.RUnlock()
+	return s.dl
+}
+
+// SetFailoverManager sets the failover manager for DNS route failover.
+func (s *ServiceImpl) SetFailoverManager(fm *FailoverManager) {
+	s.failover = fm
+}
+
+// SetHydraRoute sets the HydraRoute Neo service for hydraroute-backend lists.
+// hydraroute.Service satisfies the policyOrchestrator seam, so tests that
+// override policyOrchestrator before calling SetHydraRoute keep their stub.
+func (s *ServiceImpl) SetHydraRoute(h *hydraroute.Service) {
+	s.hydra = h
+	if s.policyOrchestrator == nil {
+		s.policyOrchestrator = h
+	}
+}
+
+// LookupAffectedLists returns DNS lists that reference the given tunnelID,
+// with FromTunnel/ToTunnel resolved based on the action ("switched" or "restored").
+// For "switched": FromTunnel is the failed tunnel's interface name; ToTunnel is the
+// next active route in the chain (or empty if none).
+// For "restored": ToTunnel is the recovered tunnel's interface name; FromTunnel is
+// what was active during the failure (the next route in chain).
+func (s *ServiceImpl) LookupAffectedLists(tunnelID string, action string) []AffectedList {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil
+	}
+
+	var failedSet map[string]struct{}
+	if s.failover != nil {
+		failed := s.failover.FailedTunnels()
+		if len(failed) > 0 {
+			failedSet = make(map[string]struct{}, len(failed))
+			for _, id := range failed {
+				failedSet[id] = struct{}{}
+			}
+		}
+	}
+
+	var result []AffectedList
+	for _, list := range data.Lists {
+		if !list.Enabled {
+			continue
+		}
+
+		// Find this tunnel's index in the route chain
+		idx := -1
+		for i, rt := range list.Routes {
+			if rt.TunnelID == tunnelID {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			continue // tunnel not in this list
+		}
+
+		// Determine the next active route in the chain (skipping failed ones).
+		// Always exclude the current tunnel itself:
+		// - For "switched": it just failed, traffic moves to a replacement.
+		// - For "restored": we want "what WAS active during failure" (the replacement),
+		//   not the recovered tunnel itself.
+		var nextActive string
+		for i, rt := range list.Routes {
+			if i == idx {
+				continue
+			}
+			if failedSet != nil {
+				if _, isFailed := failedSet[rt.TunnelID]; isFailed {
+					continue
+				}
+			}
+			nextActive = rt.Interface
+			break
+		}
+
+		failedIface := list.Routes[idx].Interface
+		var from, to string
+		if action == "switched" {
+			from = failedIface
+			to = nextActive
+		} else { // "restored"
+			from = nextActive
+			to = failedIface
+		}
+
+		result = append(result, AffectedList{
+			ListID:     list.ID,
+			ListName:   list.Name,
+			FromTunnel: from,
+			ToTunnel:   to,
+		})
+	}
+
+	return result
+}
+
+// Create adds a new domain list, persists it, and reconciles router state.
+func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	if isHydraRoute(list.Backend) {
+		return s.createHydraRoute(ctx, list)
+	}
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil, fmt.Errorf("store not loaded")
+	}
+
+	if strings.TrimSpace(list.Name) == "" {
+		return nil, fmt.Errorf("name must not be empty")
+	}
+
+	applyManualText(&list)
+	applyExcludesText(&list)
+
+	if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
+		return nil, fmt.Errorf("at least one domain or subscription is required")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	list.ID = nextListID(data.Lists)
+	list.Enabled = true
+	list.CreatedAt = now
+	list.UpdatedAt = now
+	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(list.ManualDomains))
+	if err := validateSubnetsLimit(len(list.Subnets)); err != nil {
+		return nil, err
+	}
+
+	// Split user-input excludes into domain-form and CIDR-form, mirroring
+	// the same handling used for ManualDomains → Domains/Subnets.
+	list.Excludes, list.ExcludeSubnets = splitDomainsAndSubnets(deduplicateDomains(list.Excludes))
+
+	// Resolve tunnel IDs to NDMS interface names for RCI commands.
+	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
+		return nil, fmt.Errorf("resolve routes: %w", err)
+	}
+
+	s.dedup(&list)
+
+	data.Lists = append(data.Lists, list)
+
+	if err := s.store.Save(data); err != nil {
+		return nil, fmt.Errorf("save after create: %w", err)
+	}
+
+	s.appLog.Info("create", list.ID, "list created: "+list.Name)
+
+	// Validate subscriptions by fetching them. If any URL fails (wrong
+	// Content-Type, unreachable, etc.), reject the entire Create.
+	if len(list.Subscriptions) > 0 {
+		if err := s.validateSubscriptions(ctx, list.Subscriptions); err != nil {
+			// Remove the just-appended list from data.
+			data.Lists = data.Lists[:len(data.Lists)-1]
+			_ = s.store.Save(data)
+			return nil, err
+		}
+		if err := s.refreshSubscriptions(ctx, list.ID); err != nil {
+			s.logError("create", list.ID, "Refresh subscriptions failed", err.Error())
+		}
+	} else {
+		if err := s.reconcileAll(ctx); err != nil {
+			s.logError("create", list.ID, "Reconcile failed", err.Error())
+		}
+	}
+
+	// Re-read the list after refresh (Domains may have been updated).
+	for i := range data.Lists {
+		if data.Lists[i].ID == list.ID {
+			return &data.Lists[i], nil
+		}
+	}
+	return &list, nil
+}
+
+// Get returns a domain list by ID.
+func (s *ServiceImpl) Get(ctx context.Context, id string) (*DomainList, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil, fmt.Errorf("store not loaded")
+	}
+
+	for i := range data.Lists {
+		if data.Lists[i].ID == id {
+			return &data.Lists[i], nil
+		}
+	}
+	return nil, fmt.Errorf("dns route list %q not found", id)
+}
+
+// List returns all domain lists: NDMS-backed ones from JSON storage merged
+// with HR-backed ones read straight from HR Neo's config files.
+func (s *ServiceImpl) List(ctx context.Context) ([]DomainList, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil, fmt.Errorf("store not loaded")
+	}
+
+	result := make([]DomainList, 0, len(data.Lists))
+	for _, l := range data.Lists {
+		// HR-backed entries are legacy rows; the HR files are now SoT.
+		if !isHydraRoute(l.Backend) {
+			result = append(result, l)
+		}
+	}
+
+	hrLists, err := s.listHydraRoute(ctx)
+	if err != nil {
+		s.appLog.Warn("hydraroute-list-rules", "", err.Error())
+	}
+	result = append(result, hrLists...)
+
+	return result, nil
+}
+
+// Update modifies an existing domain list, persists changes, and reconciles.
+func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	if isHRID(list.ID) || isHydraRoute(list.Backend) {
+		return s.updateHydraRoute(ctx, list.ID, list)
+	}
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil, fmt.Errorf("store not loaded")
+	}
+
+	idx := -1
+	for i := range data.Lists {
+		if data.Lists[i].ID == list.ID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil, fmt.Errorf("dns route list %q not found", list.ID)
+	}
+
+	existing := &data.Lists[idx]
+	excludesProvided := list.Excludes != nil
+	excludeSubnetsProvided := list.ExcludeSubnets != nil
+	excludesTextProvided := list.ExcludesText != nil
+
+	// Preserve fields not sent by the frontend update payload.
+	list.CreatedAt = existing.CreatedAt
+	list.ID = existing.ID
+	list.Enabled = existing.Enabled
+	list.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	// Defense-in-depth for partial updates: Go's json decoder cannot
+	// distinguish "field absent" from "field present with zero value", so
+	// a payload like {"routes": [...]} decodes into a DomainList where every
+	// other field is zero (empty string / nil slice). Without preserve logic
+	// Update() would silently wipe Name, ManualDomains, Subscriptions, etc.
+	// A bulk "change tunnel" operation used to do exactly that.
+	//
+	// Policy: treat zero values as "not sent" and restore from existing.
+	// This means the caller cannot set Name to "" or clear ManualDomains
+	// via this endpoint — but those edge cases are not real user intents
+	// (empty list name is invalid, empty ManualDomains makes the list
+	// useless). Full-list PUT semantics still work because the caller
+	// sends the existing values back unchanged.
+	if list.Name == "" {
+		list.Name = existing.Name
+	}
+	if list.ManualDomains == nil {
+		list.ManualDomains = existing.ManualDomains
+	}
+	if list.Subscriptions == nil {
+		list.Subscriptions = existing.Subscriptions
+	}
+	if list.Excludes == nil {
+		list.Excludes = existing.Excludes
+	}
+	if list.ExcludeSubnets == nil {
+		list.ExcludeSubnets = existing.ExcludeSubnets
+	}
+	if list.Routes == nil {
+		list.Routes = existing.Routes
+	}
+	if list.Backend == "" {
+		list.Backend = existing.Backend
+	}
+	if list.HRRouteMode == "" {
+		list.HRRouteMode = existing.HRRouteMode
+	}
+	if list.HRPolicyName == "" {
+		list.HRPolicyName = existing.HRPolicyName
+	}
+	if list.ManualText == nil {
+		list.ManualText = existing.ManualText
+	} else {
+		applyManualText(&list)
+	}
+	if excludesTextProvided {
+		applyExcludesText(&list)
+	} else if excludesProvided || excludeSubnetsProvided {
+		// Legacy/API caller updated active excludes without raw text.
+		// Do not keep stale raw ExcludesText; UI will fall back to active arrays.
+		list.ExcludesText = nil
+	} else {
+		list.ExcludesText = existing.ExcludesText
+		if list.ExcludesText != nil {
+			applyExcludesText(&list)
+		}
+	}
+
+	// Validate any new subscription URLs before saving.
+	newSubs := findNewSubscriptions(existing.Subscriptions, list.Subscriptions)
+	if len(newSubs) > 0 {
+		if err := s.validateSubscriptions(ctx, newSubs); err != nil {
+			return nil, err
+		}
+	}
+
+	// Merge domains: manual domains + existing subscription domains, then
+	// classify into DNS-style domains vs CIDR subnets so HR Neo writes them
+	// into the correct file (domain.conf vs ip.list).
+	manual := deduplicateDomains(list.ManualDomains)
+	subDomains := subscriptionDomains(existing.Domains, existing.ManualDomains)
+	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(append(manual, subDomains...)))
+	if err := validateSubnetsLimit(len(list.Subnets)); err != nil {
+		return nil, err
+	}
+
+	list.Excludes, list.ExcludeSubnets = splitDomainsAndSubnets(deduplicateDomains(list.Excludes))
+
+	// Resolve tunnel IDs to NDMS interface names for RCI commands.
+	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
+		return nil, fmt.Errorf("resolve routes: %w", err)
+	}
+
+	s.dedup(&list)
+
+	data.Lists[idx] = list
+
+	if err := s.store.Save(data); err != nil {
+		return nil, fmt.Errorf("save after update: %w", err)
+	}
+
+	s.appLog.Info("update", list.ID, "list updated: "+list.Name)
+
+	if err := s.reconcileAll(ctx); err != nil {
+		s.logError("update", list.ID, "Reconcile failed", err.Error())
+	}
+
+	return &list, nil
+}
+
+// Delete removes a domain list by ID, persists changes, and reconciles.
+func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	if isHRID(id) {
+		if !s.hrReady() {
+			return fmt.Errorf("HydraRoute Neo is not installed")
+		}
+		name := nameFromHRID(id)
+		if err := s.hydra.DeleteRule(name); err != nil {
+			return err
+		}
+		if data := s.store.GetCached(); data != nil && data.HRRuleIcons != nil {
+			if _, ok := data.HRRuleIcons[name]; ok {
+				delete(data.HRRuleIcons, name)
+				if err := s.store.Save(data); err != nil {
+					return fmt.Errorf("save after HR icon delete: %w", err)
+				}
+			}
+		}
+		return nil
+	}
+
+	data := s.store.GetCached()
+	if data == nil {
+		return fmt.Errorf("store not loaded")
+	}
+
+	idx := -1
+	for i := range data.Lists {
+		if data.Lists[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("dns route list %q not found", id)
+	}
+
+	name := data.Lists[idx].Name
+	data.Lists = append(data.Lists[:idx], data.Lists[idx+1:]...)
+
+	if err := s.store.Save(data); err != nil {
+		return fmt.Errorf("save after delete: %w", err)
+	}
+
+	s.appLog.Info("delete", id, "list deleted: "+name)
+
+	if err := s.reconcileAll(ctx); err != nil {
+		s.logError("delete", id, "Reconcile failed", err.Error())
+	}
+
+	return nil
+}
+
+// DeleteBatch removes multiple domain lists by IDs, persists once, and reconciles once.
+// Returns the count of actually deleted lists.
+func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return 0, fmt.Errorf("store not loaded")
+	}
+
+	toDelete := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		toDelete[id] = true
+	}
+
+	kept := make([]DomainList, 0, len(data.Lists))
+	deleted := 0
+	for _, list := range data.Lists {
+		if toDelete[list.ID] {
+			s.appLog.Info("delete", list.ID, "list deleted: "+list.Name)
+			deleted++
+		} else {
+			kept = append(kept, list)
+		}
+	}
+
+	if deleted == 0 {
+		return 0, nil
+	}
+
+	data.Lists = kept
+
+	if err := s.store.Save(data); err != nil {
+		return 0, fmt.Errorf("save after delete batch: %w", err)
+	}
+
+	if err := s.reconcileAll(ctx); err != nil {
+		s.logError("delete-batch", "", "Reconcile failed", err.Error())
+	}
+
+	return deleted, nil
+}
+
+// CreateBatch adds multiple domain lists, persists once, and reconciles once.
+// Lists with empty name or no domains/subscriptions are silently skipped.
+func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*DomainList, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil, fmt.Errorf("store not loaded")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	var createdIDs []string
+	var hrCreated []*DomainList
+	hasSubs := false
+
+	for _, list := range lists {
+		if strings.TrimSpace(list.Name) == "" {
+			continue
+		}
+
+		applyManualText(&list)
+		applyExcludesText(&list)
+
+		if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
+			continue
+		}
+
+		// HydraRoute-backed entries go through the real HR creation path
+		// (HR files = SoT); they must NOT land in data.Lists. HR has no
+		// subscriptions — create from ManualDomains and log-ignore any.
+		if isHydraRoute(list.Backend) {
+			if len(list.Subscriptions) > 0 {
+				s.logInfo("create-batch", list.Name, "HR rule: subscriptions unsupported, ignored")
+			}
+			dl, err := s.createHydraRoute(ctx, list)
+			if err != nil {
+				s.logError("create-batch", list.Name, "HR create failed", err.Error())
+				continue
+			}
+			hrCreated = append(hrCreated, dl)
+			continue
+		}
+
+		list.ID = nextListID(data.Lists)
+		list.Enabled = true
+		list.CreatedAt = now
+		list.UpdatedAt = now
+		list.Domains = deduplicateDomains(list.ManualDomains)
+
+		if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
+			return nil, fmt.Errorf("resolve routes for %q: %w", list.Name, err)
+		}
+
+		s.dedup(&list)
+		data.Lists = append(data.Lists, list)
+		createdIDs = append(createdIDs, list.ID)
+		s.appLog.Info("create", list.ID, "list created: "+list.Name)
+
+		if len(list.Subscriptions) > 0 {
+			hasSubs = true
+		}
+	}
+
+	if len(createdIDs) == 0 {
+		// Никаких NDMS-изменений: Save/reconcile не нужны. Чисто-HR батч
+		// (каталог OS4) возвращает созданные HR-правила напрямую.
+		return hrCreated, nil
+	}
+
+	if err := s.store.Save(data); err != nil {
+		return nil, fmt.Errorf("save after create batch: %w", err)
+	}
+
+	if hasSubs {
+		for _, id := range createdIDs {
+			// Find the list to check if it has subscriptions.
+			for i := range data.Lists {
+				if data.Lists[i].ID == id && len(data.Lists[i].Subscriptions) > 0 {
+					if err := s.refreshSubscriptions(ctx, id); err != nil {
+						s.logError("create-batch", id, "Refresh subscriptions failed", err.Error())
+					}
+					break
+				}
+			}
+		}
+	} else {
+		if err := s.reconcileAll(ctx); err != nil {
+			s.logError("create-batch", "", "Reconcile failed", err.Error())
+		}
+	}
+
+	// Collect created lists from data (may have been updated by refreshSubscriptions).
+	result := make([]*DomainList, 0, len(createdIDs))
+	idSet := make(map[string]bool, len(createdIDs))
+	for _, id := range createdIDs {
+		idSet[id] = true
+	}
+	for i := range data.Lists {
+		if idSet[data.Lists[i].ID] {
+			result = append(result, &data.Lists[i])
+		}
+	}
+
+	result = append(result, hrCreated...)
+	return result, nil
+}
+
+// SetEnabled toggles the enabled state of a domain list.
+func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	if isHRID(id) {
+		if !s.hrReady() {
+			return fmt.Errorf("HydraRoute Neo is not installed")
+		}
+		name := nameFromHRID(id)
+		if name == "" {
+			return fmt.Errorf("invalid HR rule id %q", id)
+		}
+		if err := s.hydra.SetRuleEnabled(name, enabled); err != nil {
+			return err
+		}
+		s.logInfo("set-enabled", id, fmt.Sprintf("enabled=%v name=%q backend=hydraroute", enabled, name))
+		return nil
+	}
+
+	data := s.store.GetCached()
+	if data == nil {
+		return fmt.Errorf("store not loaded")
+	}
+
+	idx := -1
+	for i := range data.Lists {
+		if data.Lists[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("dns route list %q not found", id)
+	}
+
+	listName := data.Lists[idx].Name
+	listBackend := data.Lists[idx].Backend
+	data.Lists[idx].Enabled = enabled
+	data.Lists[idx].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	if err := s.store.Save(data); err != nil {
+		return fmt.Errorf("save after set-enabled: %w", err)
+	}
+
+	s.logInfo("set-enabled", id, fmt.Sprintf("enabled=%v name=%q backend=%s", enabled, listName, listBackend))
+
+	if err := s.reconcileAll(ctx); err != nil {
+		s.logError("set-enabled", id, "Reconcile failed", err.Error())
+	}
+
+	return nil
+}
+
+// validateSubscriptions fetches each subscription URL and verifies it returns
+// text/plain with at least one parseable domain. Returns the first error encountered.
+func (s *ServiceImpl) validateSubscriptions(ctx context.Context, subs []Subscription) error {
+	seenSubnets := make(map[string]struct{})
+	for _, sub := range subs {
+		domains, err := s.fetchSubscription(ctx, sub.URL)
+		if err != nil {
+			return fmt.Errorf("подписка %q: %w", sub.URL, err)
+		}
+		if len(domains) == 0 {
+			return fmt.Errorf("подписка %q: список пуст — URL не содержит доменов", sub.URL)
+		}
+		_, subnets := splitDomainsAndSubnets(domains)
+		for _, subnet := range subnets {
+			seenSubnets[subnet] = struct{}{}
+		}
+		if err := validateSubnetsLimit(len(seenSubnets)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RefreshSubscriptions fetches all subscriptions for a single list and merges domains.
+func (s *ServiceImpl) RefreshSubscriptions(ctx context.Context, id string) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	return s.refreshSubscriptions(ctx, id)
+}
+
+func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error {
+	data := s.store.GetCached()
+	if data == nil {
+		return fmt.Errorf("store not loaded")
+	}
+
+	idx := -1
+	for i := range data.Lists {
+		if data.Lists[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("dns route list %q not found", id)
+	}
+
+	list := &data.Lists[idx]
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Fetch each subscription
+	var allSubDomains [][]string
+	for i := range list.Subscriptions {
+		sub := &list.Subscriptions[i]
+		domains, err := s.fetchSubscription(ctx, sub.URL)
+		sub.LastFetched = now
+		if err != nil {
+			sub.LastError = err.Error()
+			sub.LastCount = 0
+			s.appLog.Warn("subscription-fetch", id, fmt.Sprintf("url=%s err=%s", sub.URL, err.Error()))
+			// Keep going — one failed subscription shouldn't block others
+			continue
+		}
+		sub.LastError = ""
+		sub.LastCount = len(domains)
+		allSubDomains = append(allSubDomains, domains)
+	}
+
+	// Merge manual + subscription domains, then classify CIDRs → Subnets.
+	merged := mergeDomains(list.ManualDomains, allSubDomains)
+	domains, subnets := splitDomainsAndSubnets(merged)
+	if err := validateSubnetsLimit(len(subnets)); err != nil {
+		return err
+	}
+	list.Domains, list.Subnets = domains, subnets
+	s.dedup(list)
+	list.UpdatedAt = now
+
+	if err := s.store.Save(data); err != nil {
+		return fmt.Errorf("save after refresh: %w", err)
+	}
+
+	s.appLog.Info("subscription-refresh", id, fmt.Sprintf("totalDomains=%d", len(list.Domains)))
+
+	return s.reconcileAll(ctx)
+}
+
+func validateSubnetsLimit(count int) error {
+	if count > MaxSubnetsPerList {
+		return fmt.Errorf("слишком много подсетей: %d (лимит %d)", count, MaxSubnetsPerList)
+	}
+	return nil
+}
+
+// RefreshAllSubscriptions fetches subscriptions for all lists.
+func (s *ServiceImpl) RefreshAllSubscriptions(ctx context.Context) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return fmt.Errorf("store not loaded")
+	}
+
+	var lastErr error
+	for _, list := range data.Lists {
+		if err := s.refreshSubscriptions(ctx, list.ID); err != nil {
+			s.logError("refresh", list.ID, "Refresh subscriptions failed", err.Error())
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+// OnTunnelStart reconciles DNS routes after a tunnel becomes available.
+func (s *ServiceImpl) OnTunnelStart(ctx context.Context) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	return s.reconcileAll(ctx)
+}
+
+// OnTunnelDelete removes route targets referencing the deleted tunnel and reconciles.
+// Also clears any failover state for the deleted tunnel.
+func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error {
+	// Clean up failover state first (uses its own mutex, before opMu lock).
+	// Skip if not in failedSet to avoid redundant reconcile.
+	if s.failover != nil && s.failover.IsFailed(tunnelID) {
+		_ = s.failover.MarkRecovered(tunnelID)
+	}
+
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil
+	}
+
+	changed := false
+	for i := range data.Lists {
+		var kept []RouteTarget
+		for _, rt := range data.Lists[i].Routes {
+			if rt.TunnelID == tunnelID {
+				changed = true
+				continue
+			}
+			kept = append(kept, rt)
+		}
+		if kept == nil {
+			kept = []RouteTarget{}
+		}
+		data.Lists[i].Routes = kept
+	}
+
+	if changed {
+		if err := s.store.Save(data); err != nil {
+			return fmt.Errorf("save after tunnel delete cleanup: %w", err)
+		}
+		s.appLog.Info("cleanup-targets", tunnelID, "removed from dns route targets")
+	}
+
+	return s.reconcileAll(ctx)
+}
+
+// CleanupAll removes all DNS route objects (AWG_*) from NDMS.
+func (s *ServiceImpl) CleanupAll(ctx context.Context) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	s.store.Save(EmptyStoreData())
+	return s.reconcileAll(ctx)
+}
+
+// Reconcile synchronises router state (object-groups, dns-proxy routes) with stored lists.
+func (s *ServiceImpl) Reconcile(ctx context.Context) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	return s.reconcileAll(ctx)
+}
+
+// resolveRouteInterfaces fills RouteTarget.Interface from TunnelID via the resolver.
+// Frontend sends tunnelId; backend resolves it to the NDMS interface name needed by RCI.
+func (s *ServiceImpl) resolveRouteInterfaces(ctx context.Context, routes []RouteTarget) error {
+	if s.resolver == nil {
+		return nil
+	}
+	for i := range routes {
+		if routes[i].TunnelID == "" {
+			continue
+		}
+		iface, err := s.resolver.ResolveInterface(ctx, routes[i].TunnelID)
+		if err != nil {
+			return fmt.Errorf("resolve tunnel %s: %w", routes[i].TunnelID, err)
+		}
+		routes[i].Interface = iface
+	}
+	return nil
+}
+
+// dedup runs domain and subnet deduplication for the given list against all other lists.
+// It modifies list.Domains and list.Subnets in place and sets list.LastDedupeReport.
+func (s *ServiceImpl) dedup(list *DomainList) {
+	data := s.store.GetCached()
+	if data == nil {
+		return
+	}
+
+	// Build index from all lists except the current one.
+	idx := BuildIndex(data.Lists, list.ID)
+	names := listNameMap(data.Lists)
+	names[list.ID] = list.Name
+
+	// Deduplicate domains.
+	keptDomains, domainReport := idx.CheckBatch(list.Domains, list.ID, names)
+
+	// Deduplicate subnets.
+	keptSubnets, subnetReport := dedupSubnets(list.Subnets, list.ID, list.Name, data.Lists)
+
+	// Merge reports.
+	report := DedupeReport{
+		TotalInput:    domainReport.TotalInput + subnetReport.TotalInput,
+		TotalKept:     domainReport.TotalKept + subnetReport.TotalKept,
+		TotalRemoved:  domainReport.TotalRemoved + subnetReport.TotalRemoved,
+		ExactDupes:    domainReport.ExactDupes + subnetReport.ExactDupes,
+		WildcardDupes: domainReport.WildcardDupes + subnetReport.WildcardDupes,
+		Items:         append(domainReport.Items, subnetReport.Items...),
+	}
+
+	list.Domains = keptDomains
+	if list.Domains == nil {
+		list.Domains = []string{}
+	}
+	list.Subnets = keptSubnets
+
+	if report.TotalRemoved > 0 {
+		list.LastDedupeReport = &report
+	} else {
+		list.LastDedupeReport = nil
+	}
+}
+
+// nextListID generates the next sequential list ID (list_1, list_2, ...).
+func nextListID(lists []DomainList) string {
+	max := 0
+	for _, l := range lists {
+		if strings.HasPrefix(l.ID, "list_") {
+			var n int
+			if _, err := fmt.Sscanf(l.ID, "list_%d", &n); err == nil && n > max {
+				max = n
+			}
+		}
+	}
+	return fmt.Sprintf("list_%d", max+1)
+}
+
+// deduplicateDomains returns a trimmed, deduplicated list. Real domains get
+// lowercased (DNS is case-insensitive). geosite:/geoip: tags are preserved
+// as-is — HR Neo matches them byte-for-byte against the .dat file, which
+// uses upper-case geosite tags (GOOGLE) and lower-case geoip country codes
+// (ru). Dedup is case-insensitive in either case.
+func deduplicateDomains(domains []string) []string {
+	seen := make(map[string]bool, len(domains))
+	result := make([]string, 0, len(domains))
+	for _, raw := range domains {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		var stored string
+		if isGeoTag(entry) {
+			stored = entry
+		} else {
+			stored = strings.ToLower(entry)
+		}
+		key := strings.ToLower(stored)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, stored)
+	}
+	return result
+}
+
+// isGeoTag reports whether the entry is a geosite:/geoip: tag whose case
+// must be preserved for HR Neo's byte-for-byte tag match.
+func isGeoTag(s string) bool {
+	return strings.HasPrefix(s, "geosite:") || strings.HasPrefix(s, "geoip:")
+}
+
+// subscriptionDomains returns the domains that came from subscriptions (present in
+// allDomains but not in manualDomains). Used to preserve subscription-fetched domains
+// when the manual domain list is updated.
+func subscriptionDomains(allDomains, manualDomains []string) []string {
+	manual := make(map[string]bool, len(manualDomains))
+	for _, d := range manualDomains {
+		manual[strings.ToLower(strings.TrimSpace(d))] = true
+	}
+
+	var sub []string
+	for _, d := range allDomains {
+		norm := strings.ToLower(strings.TrimSpace(d))
+		if norm != "" && !manual[norm] {
+			sub = append(sub, norm)
+		}
+	}
+	return sub
+}
+
+// reconcileAll runs NDMS reconciliation. HR rules no longer participate —
+// HR config files are the source of truth and are written directly by the
+// hydraroute service; there is nothing to reconcile from JSON storage.
+func (s *ServiceImpl) reconcileAll(ctx context.Context) error {
+	if s.reconcileFn != nil {
+		return s.reconcileFn(ctx)
+	}
+	return s.reconcile(ctx)
+}
+
+func (s *ServiceImpl) logInfo(action, target, msg string) {
+	s.appLog.Info(action, target, msg)
+}
+
+func (s *ServiceImpl) logError(action, target, msg, errMsg string) {
+	s.appLog.Warn(action, target, msg+": "+errMsg)
+}

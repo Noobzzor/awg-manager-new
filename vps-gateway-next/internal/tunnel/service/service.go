@@ -1,0 +1,165 @@
+// Package service provides the high-level tunnel service with business logic.
+// This is the main entry point for tunnel operations.
+package service
+
+import (
+	"context"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
+)
+
+// Service is the interface for high-level tunnel operations.
+// It orchestrates state checking, operator calls, and storage updates.
+type Service interface {
+	// CRUD operations
+
+	// Get returns a tunnel with its current state.
+	Get(ctx context.Context, tunnelID string) (*TunnelWithStatus, error)
+
+	// List returns all tunnels with their current states.
+	List(ctx context.Context) ([]TunnelWithStatus, error)
+
+	// Update applies a tunnel configuration diff. The handler is the only
+	// writer of storage; this method performs runtime RCI commands based on
+	// the difference between oldStored (current persisted state) and newStored
+	// (the state about to be persisted). It does NOT save to storage itself.
+	//
+	// Mutation contract: Update MAY mutate runtime fields on newStored
+	// (currently ResolvedEndpointIP and ActiveWAN, populated when the
+	// endpoint route is re-set up). Callers must observe the mutation
+	// through the same pointer and persist newStored AFTER Update returns.
+	//
+	// Failure semantics: Update returns an error when an RCI command fails.
+	// The handler is responsible for translating this into a 4xx/5xx
+	// response and skipping the storage save (fail-closed) so on-disk
+	// state never diverges from the running interface.
+	Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
+
+	// Lifecycle operations — thin delegators to orchestrator.
+
+	// Start starts a tunnel.
+	Start(ctx context.Context, tunnelID string) error
+
+	// Stop stops a tunnel.
+	Stop(ctx context.Context, tunnelID string) error
+
+	// Restart stops and starts a tunnel.
+	Restart(ctx context.Context, tunnelID string) error
+
+	// Delete stops (if running) and deletes a tunnel.
+	Delete(ctx context.Context, tunnelID string) error
+
+	// SetEnabled changes the enabled/autostart state of a tunnel.
+	SetEnabled(ctx context.Context, tunnelID string, enabled bool) error
+
+	// SetDefaultRoute changes the default route setting.
+	// If tunnel is running, immediately applies route changes.
+	SetDefaultRoute(ctx context.Context, tunnelID string, enabled bool) error
+
+	// Import parses a WireGuard .conf file and creates a tunnel.
+	// backend selects the tunnel backend: "nativewg" or "kernel" (default).
+	//
+	// link — поля владения прокси-подсистемы. Едут в ЗАПИСЬ, а не дописываются
+	// вторым шагом: вызывающий, создававший туннель импортом и проставлявший
+	// связь отдельным Update, оставлял окно, в котором туннель уже есть, а
+	// связи нет. Такой туннель не видит уборка связанных, и осиротевшую
+	// карточку снять автоматически уже нечем. Нулевое значение — связи нет.
+	Import(ctx context.Context, confContent, name, backend string, link ImportLink) (*TunnelWithStatus, error)
+
+	// ReplaceConfig replaces a tunnel's Interface and Peer from a new .conf,
+	// preserving all metadata (ID, Backend, NWGIndex, routing, PingCheck, etc.).
+	// Does NOT handle stop/start — caller is responsible for lifecycle.
+	//
+	// opts — поля записи, которые меняются ВМЕСТЕ с конфигурацией и тем же
+	// мутатором (см. ReplaceOptions).
+	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts ReplaceOptions) error
+
+	// Validation
+
+	// CheckAddressConflicts returns warnings if the tunnel's address
+	// conflicts with any other stored tunnel.
+	CheckAddressConflicts(ctx context.Context, tunnelID string) []string
+
+	// State operations
+
+	// GetState returns the current state of a tunnel.
+	GetState(ctx context.Context, tunnelID string) tunnel.StateInfo
+
+	// GetResolvedISP returns the resolved ISP interface name for a running tunnel.
+	// For auto-mode tunnels, returns the WAN picked during endpoint route setup.
+	GetResolvedISP(tunnelID string) string
+
+	// WANModel returns the unified WAN state model.
+	WANModel() *wan.Model
+
+	// MigrateISPInterfaceNone converts legacy "none" ISPInterface values to "" (auto).
+	// Called once at startup to migrate tunnels from older versions.
+	MigrateISPInterfaceNone()
+
+	// MigrateISPInterfaceToKernel converts legacy NDMS ID values in ISPInterface
+	// and ActiveWAN to kernel names. Called once at startup after WAN model is populated.
+	MigrateISPInterfaceToKernel()
+
+	// MigrateEmptyBackend sets Backend="kernel" on all tunnels with empty Backend field.
+	MigrateEmptyBackend()
+
+	// HealStaleActiveWAN clears stored.ActiveWAN values that don't name a real
+	// kernel interface. Repairs storage written by the old (buggy) resolver
+	// that occasionally persisted NDMS logical labels (e.g. "ISP") instead
+	// of kernel names. Called once at startup.
+	HealStaleActiveWAN()
+}
+
+// ImportLink — поля владения прокси-подсистем, которые обязаны появиться
+// ВМЕСТЕ с записью туннеля.
+//
+// Отдельный тип, а не два строковых параметра: связей две, они
+// взаимоисключающие по смыслу (туннель принадлежит одной подсистеме), и
+// перепутанные местами литералы не дали бы ни ошибки, ни отказа — только
+// пустой список связанных туннелей и вечное молчание уборки.
+type ImportLink struct {
+	// WdttClientID — storage.AWGTunnel.WdttClientID.
+	WdttClientID string
+	// AmneziaCountry — страна подписки Amnezia Premium, из которой получена
+	// импортируемая конфигурация (storage.AWGTunnel.AmneziaCountry).
+	// Нормализуется импортом; пусто — импорт не из мастера.
+	AmneziaCountry string
+	// FreeTurnClientID — storage.AWGTunnel.FreeTurnClientID.
+	FreeTurnClientID string
+	// Obfuscator — туннель через wg-obfuscator (Phobos/ClusterM). LocalPort
+	// выбирает Import; бэкенд принудительно nativewg.
+	Obfuscator *storage.Obfuscator
+}
+
+// ReplaceOptions — поля записи, которые описывают ИМЕННО заменяемую
+// конфигурацию и потому едут в тот же мутатор, что и она.
+//
+// Указатель, а не строка: шестым позиционным string соседние вызовы, которым
+// страна безразлична (импорт связанного прокси-клиента, инструмент MCP),
+// передали бы "" — и молча стёрли бы чужое поле. nil читается компилятором
+// как «не трогать», пустая строка — как осознанная очистка.
+type ReplaceOptions struct {
+	// AmneziaCountry — storage.AWGTunnel.AmneziaCountry. nil — поле не
+	// трогать; непустое значение — поставить (нормализуется); пустая строка —
+	// очистить (конфигурация пришла не из мастера Amnezia Premium).
+	AmneziaCountry *string
+}
+
+// TunnelWithStatus combines stored tunnel data with live status.
+type TunnelWithStatus struct {
+	ID            string           `json:"id"`
+	Name          string           `json:"name"`
+	Config        tunnel.Config    `json:"-"`
+	State         tunnel.State     `json:"state"`
+	StateInfo     tunnel.StateInfo `json:"stateInfo"`
+	Enabled       bool             `json:"enabled"`
+	AutoStart     bool             `json:"autoStart,omitempty"`
+	PingCheckOn   bool             `json:"pingCheckOn,omitempty"`
+	DefaultRoute  bool             `json:"defaultRoute"`
+	ISPInterface  string           `json:"ispInterface,omitempty"`
+	InterfaceName string           `json:"interfaceName"`      // Kernel interface name (opkgtun0 on OS5, awg0 on OS4, nwgN for NativeWG)
+	NDMSName      string           `json:"ndmsName,omitempty"` // NDMS interface name (WireguardN), NativeWG only — how SSE events key per tunnel
+	Backend       string           `json:"backend"`            // "nativewg" | "kernel"
+}

@@ -1,0 +1,56 @@
+{
+  "proxy-status": [
+    {
+      "proxy-name": "System",
+      "proxy-config": "rpc_port = 54321\nrpc_ttl = 10000\ntimeout = 7000\nproceed = 500\nrr_port = 40901\ndns_server = 127.0.0.1:40500 . # 8.8.8.8@dns.google\ndns_server = 127.0.0.1:40501 ru # 77.88.8.8:853@common.dot.dns.yandex.net\ndns_server = 127.0.0.1:40502 . # 9.9.9.9\nstatic_a = host1.example.net 203.0.113.10 1\nstatic_aaaa = host1.example.net 2001:db8::1 1\nrpc_const = on\nstatic_a = awgm-dnscheck.test 10.10.10.1 0\nstatic_a = host2.example.com 203.0.113.10 1\nstatic_aaaa = host2.example.com 2001:db8::1 1\nstatic_a = host3.example.ru 203.0.113.10 1\nstatic_aaaa = host3.example.ru 2001:db8::1 1\nstatic_a = host4.example.io 203.0.113.10 1\nstatic_aaaa = host5.example.ru 2001:db8::1 1\nnorebind_ctl = on\nnorebind_ip4net = 10.10.10.1:24\nnorebind_ip4net = 10.10.20.1:24\nnorebind_ip4net = 172.16.6.1:24\nnorebind_ip4net = 255.255.255.255:32\nnorebind_exclude ru\nnorebind_exclude *.ru\nhas_vpn_clients = off\ndns_tcp_port = 53\ndns_udp_port = 53\n\n",
+      "proxy-stat": "# ndnproxy statistics file\n\nTotal incoming requests: 2\nProxy requests sent:     2\nCache hits ratio:        0.000 (0)\nMemory usage:            13.33K\n\nDNS Servers\n\n                      Ip   Port  R.Sent  A.Rcvd  NX.Rcvd  Med.Resp  Avg.Resp  Rank  \n               127.0.0.1  40501       2       2        0      84ms      78ms     4  \n               127.0.0.1  40500       0       0        0       0ms       0ms     2  \n               127.0.0.1  40502       0       0        0       0ms       0ms     2  \n",
+      "proxy-tls": {
+        "server-tls": [
+          { "address": "8.8.8.8", "sni": "dns.google", "spki": "", "interface": "", "domain": "" },
+          { "address": "77.88.8.8", "port": 853, "sni": "common.dot.dns.yandex.net", "spki": "", "interface": "", "domain": "ru" },
+          { "address": "9.9.9.9", "sni": "", "spki": "", "interface": "", "domain": "" }
+        ]
+      },
+      "proxy-https": {}
+    },
+    {
+      "proxy-name": "Policy0",
+      "proxy-config": "timeout = 7000\nproceed = 500\ndns_server = 127.0.0.1:40516 . # 8.8.8.8@dns.google\ndns_server = 127.0.0.1:40517 ru # 77.88.8.8:853@common.dot.dns.yandex.net\ndns_server = 127.0.0.1:40518 . # 9.9.9.9\nstatic_a = awgm-dnscheck.test 10.10.10.1 0\nnorebind_ctl = on\nnorebind_ip4net = 10.10.10.1:24\nnorebind_exclude ru\nnorebind_exclude *.ru\ndns_tcp_port = 41100\ndns_udp_port = 41100\n\n",
+      "proxy-stat": "# ndnproxy statistics file\n\nTotal incoming requests: 4\nProxy requests sent:     1\nCache hits ratio:        0.750 (3)\nMemory usage:            12.75K\n\nDNS Servers\n\n                      Ip   Port  R.Sent  A.Rcvd  NX.Rcvd  Med.Resp  Avg.Resp  Rank  \n               127.0.0.1  40517       1       1        0     428ms     428ms     4  \n               127.0.0.1  40516       0       0        0       0ms       0ms     5  \n               127.0.0.1  40518       0       0        0       0ms       0ms     4  \n",
+      "proxy-tls": {
+        "server-tls": [
+          { "address": "8.8.8.8", "sni": "dns.google" },
+          { "address": "77.88.8.8", "port": 853, "sni": "common.dot.dns.yandex.net", "domain": "ru" },
+          { "address": "9.9.9.9", "sni": "" }
+        ]
+      },
+      "proxy-https": {}
+    },
+    {
+      "proxy-name": "Policy1",
+      "proxy-config": "timeout = 7000\nproceed = 500\ndns_server = 127.0.0.1:40532 . # 8.8.8.8@dns.google\ndns_server = 127.0.0.1:40533 ru # 77.88.8.8:853@common.dot.dns.yandex.net\ndns_server = 127.0.0.1:40534 . # 9.9.9.9\nstatic_a = awgm-dnscheck.test 10.10.10.1 0\nnorebind_ctl = on\nnorebind_ip4net = 10.10.10.1:24\nnorebind_exclude ru\nnorebind_exclude *.ru\ndns_tcp_port = 41101\ndns_udp_port = 41101\n\n",
+      "proxy-stat": "# ndnproxy statistics file\n\nTotal incoming requests: 283\nProxy requests sent:     102\nCache hits ratio:        0.640 (181)\nMemory usage:            17.25K\n\nDNS Servers\n\n                      Ip   Port  R.Sent  A.Rcvd  NX.Rcvd  Med.Resp  Avg.Resp  Rank  \n               127.0.0.1  40533      11      11        0      70ms      60ms     8  \n               127.0.0.1  40532       4       4        0     144ms     143ms     4  \n               127.0.0.1  40534      87      87        0     147ms     109ms     4  \n",
+      "proxy-tls": {
+        "server-tls": [
+          { "address": "8.8.8.8", "sni": "dns.google" },
+          { "address": "77.88.8.8", "port": 853, "sni": "common.dot.dns.yandex.net", "domain": "ru" },
+          { "address": "9.9.9.9", "sni": "" }
+        ]
+      },
+      "proxy-https": {}
+    },
+    {
+      "proxy-name": "Policy2",
+      "proxy-config": "timeout = 7000\nproceed = 500\ndns_server = 127.0.0.1:40548 . # 8.8.8.8@dns.google\ndns_server = 127.0.0.1:40549 ru # 77.88.8.8:853@common.dot.dns.yandex.net\ndns_server = 127.0.0.1:40550 . # 9.9.9.9\nstatic_a = awgm-dnscheck.test 10.10.10.1 0\nnorebind_ctl = on\ndns_tcp_port = 41102\ndns_udp_port = 41102\n\n",
+      "proxy-stat": "# ndnproxy statistics file\n\nTotal incoming requests: 0\nProxy requests sent:     0\nCache hits ratio:        0.000 (0)\nMemory usage:            12.75K\n\nDNS Servers\n\n                      Ip   Port  R.Sent  A.Rcvd  NX.Rcvd  Med.Resp  Avg.Resp  Rank  \n               127.0.0.1  40549       0       0        0       0ms       0ms     1  \n               127.0.0.1  40548       0       0        0       0ms       0ms     1  \n               127.0.0.1  40550       0       0        0       0ms       0ms     1  \n",
+      "proxy-tls": {
+        "server-tls": [
+          { "address": "8.8.8.8", "sni": "dns.google" },
+          { "address": "77.88.8.8", "port": 853, "sni": "common.dot.dns.yandex.net", "domain": "ru" },
+          { "address": "9.9.9.9", "sni": "" }
+        ]
+      },
+      "proxy-https": {}
+    }
+  ]
+}

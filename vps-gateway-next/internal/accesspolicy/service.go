@@ -1,0 +1,57 @@
+package accesspolicy
+
+import (
+	"context"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+)
+
+// Service defines operations on Keenetic NDMS access policies.
+type Service interface {
+	// List returns all access policies with their permitted interfaces and device counts.
+	List(ctx context.Context) ([]Policy, error)
+
+	// Create creates a new policy with the given description.
+	// Automatically finds the first free PolicyN index.
+	Create(ctx context.Context, description string) (*Policy, error)
+
+	// Delete removes a policy by name (e.g. "Policy0").
+	Delete(ctx context.Context, name string) error
+
+	// SetDescription updates the description of a policy.
+	SetDescription(ctx context.Context, name, description string) error
+
+	// SetStandalone enables or disables standalone mode on a policy.
+	SetStandalone(ctx context.Context, name string, enabled bool) error
+
+	// PermitInterface adds an interface to a policy's permitted list.
+	PermitInterface(ctx context.Context, name, iface string, order int) error
+
+	// DenyInterface removes an interface from a policy's permitted list.
+	DenyInterface(ctx context.Context, name, iface string) error
+
+	// AssignDevice assigns a device (by MAC) to a policy.
+	AssignDevice(ctx context.Context, mac, policyName string) error
+
+	// UnassignDevice removes a device's policy assignment.
+	UnassignDevice(ctx context.Context, mac string) error
+
+	// ListDevices returns all known LAN devices with their policy assignments.
+	ListDevices(ctx context.Context) ([]Device, error)
+
+	// ListGlobalInterfaces returns all router interfaces available for policy routing.
+	ListGlobalInterfaces(ctx context.Context) ([]GlobalInterface, error)
+
+	// SetInterfaceUp brings an interface up or down.
+	SetInterfaceUp(ctx context.Context, ndmsName string, up bool) error
+
+	// GetPolicyMark returns the hex-formatted NDMS-assigned fwmark for the
+	// named policy (e.g. "0xffffaaa"). Returns query.ErrPolicyMarkNotFound
+	// if the policy is absent or has no mark.
+	GetPolicyMark(ctx context.Context, policyName string) (string, error)
+
+	// ListPolicyExits returns the policies whose default route exits via
+	// iface, with their NDMS marks. policy-tun uses it to find the connmarks
+	// whose DNS must be hijacked.
+	ListPolicyExits(ctx context.Context, iface string) ([]query.PolicyDefaultExit, error)
+}

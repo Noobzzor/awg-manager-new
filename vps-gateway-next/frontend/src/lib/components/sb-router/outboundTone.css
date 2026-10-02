@@ -1,0 +1,154 @@
+/* Shared outbound chip tones — RuleCard / OutboundTile */
+
+.tone-icon {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+}
+
+.tone-icon :global(svg) {
+	flex-shrink: 0;
+}
+
+.tone-chip :global(svg) {
+	flex-shrink: 0;
+}
+
+.tone-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border-radius: 6px;
+	font-family: var(--font-sans);
+	font-size: 12px;
+	line-height: 1.25;
+	border: 1px solid transparent;
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+/* Expert / inline tables — aligned with Badge size="sm" (remote, inline, …) */
+.tone-chip.tone-chip-compact {
+	gap: 0.25rem;
+	padding: 1px 6px;
+	border-radius: var(--radius-sm);
+	font-size: 11px;
+	line-height: 1.35;
+	font-weight: 500;
+}
+
+.tone-chip.tone-chip-compact.tone-direct {
+	font-weight: 500;
+}
+
+.tone-chip :global(.chip-label),
+.tone-chip :global(.chip-main),
+.tone-chip :global(.chip-meta) {
+	font-family: inherit;
+	font-size: inherit;
+	line-height: inherit;
+}
+
+.tone-chip.tone-proxy,
+.tone-icon.tone-proxy {
+	color: #56c8b8;
+}
+
+.tone-chip.tone-proxy {
+	background: color-mix(in srgb, #56c8b8 14%, transparent);
+	border-color: color-mix(in srgb, #56c8b8 36%, transparent);
+}
+
+.tone-chip.tone-awg,
+.tone-icon.tone-awg {
+	color: #9c8aff;
+}
+
+.tone-chip.tone-awg {
+	background: color-mix(in srgb, #9c8aff 12%, transparent);
+	border-color: color-mix(in srgb, #9c8aff 34%, transparent);
+}
+
+.tone-chip.tone-subscription,
+.tone-icon.tone-subscription {
+	color: #7dcfff;
+}
+
+.tone-chip.tone-subscription {
+	background: color-mix(in srgb, #7dcfff 14%, transparent);
+	border-color: color-mix(in srgb, #7dcfff 36%, transparent);
+}
+
+.tone-chip.tone-composite,
+.tone-icon.tone-composite {
+	color: var(--accent);
+}
+
+.tone-chip.tone-composite {
+	background: var(--accent-soft);
+	border-color: var(--accent-line);
+}
+
+.tone-chip.tone-block,
+.tone-icon.tone-block {
+	color: var(--error);
+}
+
+.tone-chip.tone-block {
+	background: rgba(181, 101, 119, 0.12);
+	border-color: rgba(181, 101, 119, 0.3);
+}
+
+.tone-chip.tone-direct,
+.tone-icon.tone-direct {
+	color: var(--text-secondary);
+}
+
+.tone-chip.tone-direct {
+	background: rgba(255, 255, 255, 0.04);
+	border-color: var(--border);
+	font-weight: 500;
+}
+
+.tone-chip.tone-via-route,
+.tone-icon.tone-via-route {
+	color: #8ab4f8;
+}
+
+.tone-chip.tone-via-route {
+	background: color-mix(in srgb, #8ab4f8 12%, transparent);
+	border-color: color-mix(in srgb, #8ab4f8 32%, transparent);
+}
+
+.tone-chip.tone-invalid,
+.tone-icon.tone-invalid {
+	color: var(--error);
+}
+
+.tone-chip.tone-invalid {
+	background: rgba(181, 101, 119, 0.14);
+	border-color: rgba(181, 101, 119, 0.45);
+}
+
+.tone-chip.tone-system,
+.tone-icon.tone-system {
+	color: var(--text-muted);
+}
+
+.tone-chip.tone-system {
+	background: var(--bg-tertiary);
+	border-color: var(--border);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.tone-chip.tone-unknown,
+.tone-icon.tone-unknown {
+	color: var(--warning);
+}
+
+.tone-chip.tone-unknown {
+	background: rgba(184, 147, 90, 0.12);
+	border-color: rgba(184, 147, 90, 0.3);
+}

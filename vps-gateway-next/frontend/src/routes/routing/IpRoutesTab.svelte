@@ -1,0 +1,414 @@
+<script lang="ts">
+    import { api } from '$lib/api/client';
+    import { errorMessage } from '$lib/utils/errorMessage';
+    import type { StaticRouteList, RoutingTunnel } from '$lib/types';
+    import { ConfirmModal, StoreStatusBadge, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
+    import { IpRouteCard, IpRouteEditModal, IpRouteImportModal } from '$lib/components/routing';
+    import { IconPickerModal } from '$lib/components/dnsroutes';
+    import { exportStaticRoutes, type PortableStaticRoute } from '$lib/utils/staticroute-export';
+    import { downloadJson } from '$lib/utils/dns-export';
+    import { notifications } from '$lib/stores/notifications';
+    import { staticRoutesStore } from '$lib/stores/routing';
+    import RoutingTabBodySkeleton from './RoutingTabBodySkeleton.svelte';
+    import RoutingRuleAddMenu from '$lib/components/routing/RoutingRuleAddMenu.svelte';
+    import { ERROR_WORDS, pluralForm, pluralize, ROUTE_WORDS, RULE_WORDS } from '$lib/utils/pluralize';
+
+    interface Props {
+        ipRoutes: StaticRouteList[];
+        routingTunnels: RoutingTunnel[];
+        editRuleId?: string;
+        editRuleCounter?: number;
+        bodyLoading?: boolean;
+    }
+
+    let { ipRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0, bodyLoading = false }: Props = $props();
+
+    // Open edit modal when search result is clicked.
+    // Capture counter at mount to skip stale values on tab re-mount.
+    // svelte-ignore state_referenced_locally
+    const initialEditCounter = editRuleCounter;
+    $effect(() => {
+        if (editRuleCounter > initialEditCounter && editRuleId) {
+            const route = ipRoutes.find(r => r.id === editRuleId);
+            if (route) {
+                editingIpRoute = route;
+                ipCreateOpen = true;
+            }
+        }
+    });
+
+    let editingIpRoute = $state<StaticRouteList | null>(null);
+    let ipSelectionMode = $state(false);
+    let ipSelected = $state<Set<string>>(new Set());
+    let ipTunnelMode = $state(false);
+    let ipBulkTunnelId = $state('');
+    let ipBulkLoading = $state(false);
+    let ipBulkDeleteConfirm = $state(false);
+    let ipImportOpen = $state(false);
+    let ipDeleteId = $state<string | null>(null);
+    let ipToggling = $state<string | null>(null);
+    let ipSaving = $state(false);
+    let ipCreateOpen = $state(false);
+    let iconPickerOpen = $state(false);
+    let pickingForRoute = $state<StaticRouteList | null>(null);
+
+    // Orphan = list whose tunnel was deleted (TunnelID=""). Kept in storage
+    // so the user can reassign it via the Edit dialog instead of rebuilding
+    // the CIDRs from scratch.
+    let orphanRoutes = $derived(ipRoutes.filter(r => !r.tunnelID));
+    let boundRoutes = $derived(ipRoutes.filter(r => r.tunnelID));
+    let ipActiveCount = $derived(boundRoutes.filter(r => r.enabled).length);
+
+    async function saveIpRoute(data: { name: string; tunnelID: string; subnets: string[]; fallback: '' | 'reject'; iconUrl?: string }) {
+        ipSaving = true;
+        try {
+            if (editingIpRoute) {
+                await api.updateStaticRoute({
+                    ...editingIpRoute,
+                    name: data.name,
+                    tunnelID: data.tunnelID,
+                    subnets: data.subnets,
+                    fallback: data.fallback,
+                    iconUrl: data.iconUrl,
+                });
+                notifications.success('IP-маршрут обновлён');
+            } else {
+                await api.createStaticRoute({
+                    name: data.name,
+                    tunnelID: data.tunnelID,
+                    subnets: data.subnets,
+                    fallback: data.fallback,
+                    iconUrl: data.iconUrl,
+                    enabled: true,
+                });
+                notifications.success('IP-маршрут создан');
+            }
+
+            ipCreateOpen = false;
+            editingIpRoute = null;
+        } catch (e) {
+            notifications.error(errorMessage(e, 'Ошибка сохранения'));
+        } finally {
+            ipSaving = false;
+        }
+    }
+
+    async function toggleIpRoute(id: string, enabled: boolean) {
+        ipToggling = id;
+        try {
+            await api.setStaticRouteEnabled(id, enabled);
+
+        } catch (e) {
+            notifications.error(errorMessage(e, 'Ошибка'));
+        } finally {
+            ipToggling = null;
+        }
+    }
+
+    async function deleteIpRoute() {
+        if (!ipDeleteId) return;
+        const id = ipDeleteId;
+        ipDeleteId = null;
+        try {
+            await api.deleteStaticRoute(id);
+
+            notifications.success('IP-маршрут удалён');
+        } catch (e) {
+            notifications.error(errorMessage(e, 'Ошибка удаления'));
+        }
+    }
+
+    function toggleIpSelect(id: string) {
+        const next = new Set(ipSelected);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        ipSelected = next;
+    }
+
+    function ipSelectAll() {
+        ipSelected = new Set(ipRoutes.map(r => r.id));
+    }
+
+    function exitIpSelection() {
+        ipSelectionMode = false;
+        ipSelected = new Set();
+        ipTunnelMode = false;
+    }
+
+    function downloadIpExport() {
+        const selected = ipRoutes.filter(r => ipSelected.has(r.id));
+        const portable = exportStaticRoutes(selected);
+        downloadJson(portable, 'awg-ip-routes.json');
+        notifications.success(`Экспортировано ${pluralize(portable.length, ROUTE_WORDS)}`);
+    }
+
+    async function bulkIpToggle(enabled: boolean) {
+        ipBulkLoading = true;
+        try {
+            let ok = 0, fail = 0;
+            for (const id of ipSelected) {
+                try { await api.setStaticRouteEnabled(id, enabled); ok++; } catch { fail++; }
+            }
+
+            const label = enabled ? 'Включено' : 'Выключено';
+            if (fail > 0) notifications.warning(`${label} ${ok} из ${ok + fail} ${pluralForm(ok + fail, ROUTE_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
+            else notifications.success(`${label} ${pluralize(ok, ROUTE_WORDS)}`);
+        } finally {
+            ipBulkLoading = false;
+        }
+    }
+
+    async function bulkIpDelete() {
+        ipBulkLoading = true;
+        try {
+            let ok = 0, fail = 0;
+            for (const id of ipSelected) {
+                try { await api.deleteStaticRoute(id); ok++; } catch { fail++; }
+            }
+
+            exitIpSelection();
+            if (fail > 0) notifications.warning(`Удалено ${ok} из ${ok + fail} ${pluralForm(ok + fail, ROUTE_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
+            else notifications.success(`Удалено ${pluralize(ok, ROUTE_WORDS)}`);
+        } finally {
+            ipBulkLoading = false;
+            ipBulkDeleteConfirm = false;
+        }
+    }
+
+    async function bulkIpChangeTunnel() {
+        if (!ipBulkTunnelId) return;
+        ipBulkLoading = true;
+        try {
+            let ok = 0, fail = 0;
+            for (const id of ipSelected) {
+                const route = ipRoutes.find(r => r.id === id);
+                if (!route) continue;
+                try { await api.updateStaticRoute({ ...route, tunnelID: ipBulkTunnelId }); ok++; } catch { fail++; }
+            }
+
+            ipTunnelMode = false;
+            if (fail > 0) notifications.warning(`Туннель изменён для ${ok} из ${ok + fail} ${pluralForm(ok + fail, ROUTE_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
+            else notifications.success(`Туннель изменён для ${pluralize(ok, ROUTE_WORDS)}`);
+        } finally {
+            ipBulkLoading = false;
+        }
+    }
+
+    async function handleIpImport(routes: (PortableStaticRoute & { tunnelID: string })[]) {
+        let count = 0;
+        for (const route of routes) {
+            try {
+                await api.createStaticRoute({
+                    name: route.name,
+                    subnets: route.subnets,
+                    enabled: route.enabled,
+                    iconUrl: route.iconUrl,
+                    tunnelID: route.tunnelID,
+                });
+                count++;
+            } catch (e) {
+                notifications.error(`Ошибка импорта "${route.name}": ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+            }
+        }
+        ipImportOpen = false;
+        if (count > 0) {
+            notifications.success(`Импортировано ${pluralize(count, ROUTE_WORDS)}`);
+        }
+    }
+</script>
+
+<div class="section-header">
+    {#if !ipSelectionMode}
+        <span class="section-summary">
+            {#if bodyLoading}
+                …
+            {:else}
+                {pluralize(boundRoutes.length, RULE_WORDS)}, {ipActiveCount} активных{#if orphanRoutes.length > 0}, <span class="orphan-count">несвязанных: {orphanRoutes.length}</span>{/if}
+            {/if}
+        </span>
+        <div class="section-buttons">
+            <StoreStatusBadge store={staticRoutesStore} />
+            {#if ipRoutes.length > 0}
+                <Button variant="ghost" size="sm" disabled={bodyLoading} onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>Выбрать</Button>
+            {/if}
+            <RoutingRuleAddMenu
+                disabled={bodyLoading}
+                onmanual={() => {
+                    editingIpRoute = null;
+                    ipCreateOpen = true;
+                }}
+                importEnabled
+                importLabel="Загрузить набор правил"
+                onimport={() => (ipImportOpen = true)}
+            />
+        </div>
+    {:else}
+        <div class="bulk-bar">
+            <div class="bulk-bar-nav">
+                <button class="bulk-btn bulk-btn-cancel" onclick={exitIpSelection} disabled={ipBulkLoading}>✕ Отмена</button>
+                <span class="bulk-count">{ipSelected.size} выбрано</span>
+                <button class="bulk-btn bulk-btn-select-all" onclick={ipSelectAll} disabled={ipBulkLoading}>Выбрать все</button>
+            </div>
+            {#if !ipTunnelMode}
+                <div class="bulk-bar-actions">
+                    <button class="bulk-btn bulk-btn-enable" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => bulkIpToggle(true)}>Включить</button>
+                    <button class="bulk-btn bulk-btn-disable" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => bulkIpToggle(false)}>Выключить</button>
+                    <button class="bulk-btn bulk-btn-delete" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => ipBulkDeleteConfirm = true}>Удалить</button>
+                    <button class="bulk-btn bulk-btn-tunnel" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => { ipTunnelMode = true; ipBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>Туннель ▾</button>
+                    <button class="bulk-btn bulk-btn-export" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={downloadIpExport}>Экспорт</button>
+                </div>
+            {:else}
+                {@const ipBulkTunnelOpts: DropdownOption[] = [
+                    ...routingTunnels.filter(t => t.type === 'managed' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                    ...routingTunnels.filter(t => t.type === 'system' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                ]}
+                <div class="bulk-tunnel-bar">
+                    <span class="bulk-tunnel-label">Туннель:</span>
+                    <div class="bulk-tunnel-select">
+                        <Dropdown
+                            bind:value={ipBulkTunnelId}
+                            options={ipBulkTunnelOpts}
+                            disabled={ipBulkLoading}
+                            fullWidth
+                        />
+                    </div>
+                    <button class="bulk-tunnel-apply" disabled={ipBulkLoading} onclick={bulkIpChangeTunnel}>Применить ({ipSelected.size})</button>
+                    <button class="bulk-tunnel-close" onclick={() => ipTunnelMode = false}>✕</button>
+                </div>
+            {/if}
+        </div>
+    {/if}
+</div>
+
+{#if bodyLoading}
+    <RoutingTabBodySkeleton />
+{:else if ipRoutes.length === 0}
+    <div class="empty-hint">Нет IP-маршрутов</div>
+{:else}
+    {#if orphanRoutes.length > 0}
+        <div class="orphan-section">
+            <h4 class="orphan-header">Без туннеля — {orphanRoutes.length}</h4>
+            <p class="orphan-hint">Туннель удалён, правила сохранены. Нажмите «Изменить», чтобы привязать список к другому туннелю.</p>
+            <div class="route-grid">
+                {#each orphanRoutes as route (route.id)}
+                    <IpRouteCard
+                        {route}
+                        tunnels={routingTunnels}
+                        ontoggle={(enabled) => toggleIpRoute(route.id, enabled)}
+                        onedit={() => { editingIpRoute = route; ipCreateOpen = true; }}
+                        ondelete={() => ipDeleteId = route.id}
+                        toggleLoading={ipToggling === route.id}
+                        selectable={ipSelectionMode}
+                        selected={ipSelected.has(route.id)}
+                        onselect={() => toggleIpSelect(route.id)}
+                        onicon={() => { pickingForRoute = route; iconPickerOpen = true; }}
+                    />
+                {/each}
+            </div>
+        </div>
+    {/if}
+
+    {#if boundRoutes.length > 0}
+        <div class="route-grid">
+            {#each boundRoutes as route (route.id)}
+                <IpRouteCard
+                    {route}
+                    tunnels={routingTunnels}
+                    ontoggle={(enabled) => toggleIpRoute(route.id, enabled)}
+                    onedit={() => { editingIpRoute = route; ipCreateOpen = true; }}
+                    ondelete={() => ipDeleteId = route.id}
+                    toggleLoading={ipToggling === route.id}
+                    selectable={ipSelectionMode}
+                    selected={ipSelected.has(route.id)}
+                    onselect={() => toggleIpSelect(route.id)}
+                    onicon={() => { pickingForRoute = route; iconPickerOpen = true; }}
+                />
+            {/each}
+        </div>
+    {/if}
+{/if}
+
+<IpRouteEditModal
+    open={ipCreateOpen}
+    route={editingIpRoute}
+    tunnels={routingTunnels}
+    saving={ipSaving}
+    onsave={saveIpRoute}
+    onclose={() => { ipCreateOpen = false; editingIpRoute = null; }}
+/>
+
+<IpRouteImportModal
+    bind:open={ipImportOpen}
+    existingNames={ipRoutes.map(r => r.name)}
+    tunnels={routingTunnels}
+    onclose={() => ipImportOpen = false}
+    onimport={handleIpImport}
+/>
+
+{#if ipDeleteId}
+    {@const routeToDelete = ipRoutes.find(r => r.id === ipDeleteId)}
+    <ConfirmModal
+        open={true}
+        title="Удаление"
+        message={`Удалить список маршрутов «${routeToDelete?.name ?? ipDeleteId}»?`}
+        onConfirm={() => deleteIpRoute()}
+        onClose={() => ipDeleteId = null}
+    />
+{/if}
+
+{#if ipBulkDeleteConfirm}
+    <ConfirmModal
+        open={true}
+        title="Удаление"
+        message={`Удалить ${ipSelected.size} IP-маршрутов?`}
+        onConfirm={bulkIpDelete}
+        onClose={() => ipBulkDeleteConfirm = false}
+    />
+{/if}
+
+{#if pickingForRoute}
+    <IconPickerModal
+        open={iconPickerOpen}
+        iconUrl={pickingForRoute.iconUrl}
+        ruleName={pickingForRoute.name}
+        onclose={() => { iconPickerOpen = false; pickingForRoute = null; }}
+        onapply={async (newUrl) => {
+            if (!pickingForRoute) return;
+            const route = pickingForRoute;
+            iconPickerOpen = false;
+            pickingForRoute = null;
+            try {
+                await api.updateStaticRoute({ ...route, iconUrl: newUrl ?? undefined });
+                notifications.success(newUrl ? 'Иконка изменена' : 'Иконка сброшена');
+            } catch (e) {
+                notifications.error(errorMessage(e, 'Не удалось обновить иконку'));
+            }
+        }}
+    />
+{/if}
+
+<style>
+    .orphan-section {
+        margin-bottom: 18px;
+    }
+
+    .orphan-header {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--warn, #d08770);
+        margin: 0 0 4px 0;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .orphan-hint {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin: 0 0 10px 0;
+    }
+
+    .orphan-count {
+        color: var(--warn, #d08770);
+        font-weight: 500;
+    }
+</style>

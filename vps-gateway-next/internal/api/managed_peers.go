@@ -1,0 +1,203 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/signature"
+)
+
+// AddPeerRequestDTO is the swagger-visible body for POST /managed-servers/{id}/peers.
+type AddPeerRequestDTO struct {
+	Description string `json:"description" example:"My Phone"`
+	TunnelIP    string `json:"tunnelIP" example:"10.10.0.2/32"`
+	DNS         string `json:"dns,omitempty" example:"8.8.8.8"`
+}
+
+// UpdatePeerRequestDTO is the swagger-visible body for PUT /managed-servers/{id}/peers/{pubkey}.
+type UpdatePeerRequestDTO struct {
+	Description string `json:"description" example:"My Phone"`
+	TunnelIP    string `json:"tunnelIP" example:"10.10.0.2/32"`
+	DNS         string `json:"dns,omitempty" example:"8.8.8.8"`
+	// Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+	// полей и профиль целиком (пустые поля объекта стирают старые байты).
+	Signature *PeerSignatureDTO `json:"signature,omitempty"`
+}
+
+// PeerSignatureDTO is the swagger-visible peer signature: five packets plus the
+// profile they were generated from ("" — набраны руками).
+type PeerSignatureDTO struct {
+	Profile string `json:"profile" example:"quic_initial"`
+	I1      string `json:"i1" example:"<b 0xc0>"`
+	I2      string `json:"i2"`
+	I3      string `json:"i3"`
+	I4      string `json:"i4"`
+	I5      string `json:"i5"`
+}
+
+func (s *PeerSignatureDTO) packets() signature.GeneratedPackets {
+	return signature.GeneratedPackets{I1: s.I1, I2: s.I2, I3: s.I3, I4: s.I4, I5: s.I5}
+}
+
+// AddPeer adds a new peer to a managed server.
+// POST /api/managed-servers/{id}/peers
+//
+//	@Summary		Add managed-server peer
+//	@Description	Adds a new peer to the named managed server. The pubkey is generated server-side if absent.
+//	@Tags			managed-servers
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string					true	"Server id"
+//	@Param			body	body		AddPeerRequestDTO	true	"Peer payload"
+//	@Success		200		{object}	ManagedPeerResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/managed-servers/{id}/peers [post]
+func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, id string) {
+	req, ok := parseJSON[managed.AddPeerRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	peer, err := h.svc.AddPeer(r.Context(), id, req)
+	if err != nil {
+		if errors.Is(err, managed.ErrSignatureGenerate) {
+			response.Error(w, err.Error(), "SIGNATURE_GENERATE_FAILED")
+			return
+		}
+		response.Error(w, err.Error(), "ADD_PEER_FAILED")
+		return
+	}
+	h.svc.InvalidateCache(id)
+	response.Success(w, peer)
+	h.publishServerUpdated()
+}
+
+// UpdatePeer updates an existing peer of a managed server.
+// PUT /api/managed-servers/{id}/peers/{pubkey}
+//
+//	@Summary		Update managed-server peer
+//	@Description	Updates fields (name, allowed-ips, ...) of the peer identified by pubkey on the named managed server.
+//	@Description	The signature field: absent — the peer signature is left untouched; present — it replaces all five packets and the profile.
+//	@Tags			managed-servers
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string						true	"Server id"
+//	@Param			pubkey	path		string						true	"Peer public key (URL-encoded)"
+//	@Param			body	body		UpdatePeerRequestDTO	true	"Peer update payload"
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/managed-servers/{id}/peers/{pubkey} [put]
+func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
+	req, ok := parseJSON[managed.UpdatePeerRequest](w, r, http.MethodPut)
+	if !ok {
+		return
+	}
+	if err := h.svc.UpdatePeer(r.Context(), id, pubkey, req); err != nil {
+		switch {
+		case errors.Is(err, managed.ErrUnknownSignatureProfile):
+			response.Error(w, err.Error(), "INVALID_SIGNATURE_PROFILE")
+		case errors.Is(err, managed.ErrSignatureTooLarge):
+			response.Error(w, err.Error(), "SIGNATURE_TOO_LARGE")
+		case errors.Is(err, managed.ErrInvalidSignatureTag):
+			response.Error(w, err.Error(), "SIGNATURE_INVALID_TAG")
+		default:
+			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
+		}
+		return
+	}
+	h.svc.InvalidateCache(id)
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
+}
+
+// DeletePeer removes a peer from a managed server.
+// DELETE /api/managed-servers/{id}/peers/{pubkey}
+//
+//	@Summary		Delete managed-server peer
+//	@Description	Removes the peer identified by pubkey from the named managed server.
+//	@Tags			managed-servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string	true	"Server id"
+//	@Param			pubkey	path		string	true	"Peer public key (URL-encoded)"
+//	@Param			endpoint	query		string	false	"Хост для [Peer] Endpoint вместо WAN/KeenDNS (прокси-обвязки шлют 127.0.0.1)"
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/managed-servers/{id}/peers/{pubkey} [delete]
+func (h *ManagedServerHandler) DeletePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
+	if r.Method != http.MethodDelete {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if err := h.svc.DeletePeer(r.Context(), id, pubkey); err != nil {
+		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
+		return
+	}
+	h.svc.InvalidateCache(id)
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
+}
+
+// TogglePeer enables or disables a peer.
+// POST /api/managed-servers/{id}/peers/{pubkey}/toggle
+//
+//	@Summary		Toggle managed-server peer enabled
+//	@Description	Enables or disables the peer identified by pubkey on the named managed server.
+//	@Tags			managed-servers
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string					true	"Server id"
+//	@Param			pubkey	path		string					true	"Peer public key (URL-encoded)"
+//	@Param			body	body		EnabledToggleRequest	true	"Enabled flag"
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/managed-servers/{id}/peers/{pubkey}/toggle [post]
+func (h *ManagedServerHandler) TogglePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
+	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	if err := h.svc.TogglePeer(r.Context(), id, pubkey, req.Enabled); err != nil {
+		response.Error(w, err.Error(), "TOGGLE_FAILED")
+		return
+	}
+	h.svc.InvalidateCache(id)
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
+}
+
+// PeerConf returns the WireGuard client .conf file for a peer.
+// GET /api/managed-servers/{id}/peers/{pubkey}/conf
+//
+//	@Summary		Generate peer .conf
+//	@Description	Returns the WireGuard client .conf for the peer identified by pubkey on the named managed server.
+//	@Tags			managed-servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string	true	"Server id"
+//	@Param			pubkey	path		string	true	"Peer public key (URL-encoded)"
+//	@Success		200		{object}	PeerConfResponse
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/managed-servers/{id}/peers/{pubkey}/conf [get]
+func (h *ManagedServerHandler) PeerConf(w http.ResponseWriter, r *http.Request, id, pubkey string) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	conf, err := h.svc.GenerateConf(r.Context(), id, pubkey, r.URL.Query().Get("endpoint"))
+	if err != nil {
+		response.Error(w, err.Error(), "CONF_FAILED")
+		return
+	}
+	response.Success(w, map[string]string{"conf": conf})
+}

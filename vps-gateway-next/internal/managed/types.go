@@ -1,0 +1,143 @@
+package managed
+
+import (
+	"errors"
+
+	"github.com/hoaxisr/awg-manager/internal/signature"
+)
+
+// DefaultMTU is applied when the server has no explicit MTU. The same value
+// is set on the router interface and written into generated peer configs.
+const DefaultMTU = 1376
+
+// effectiveMTU resolves a stored/requested MTU: 0 (unset) means DefaultMTU.
+func effectiveMTU(mtu int) int {
+	if mtu == 0 {
+		return DefaultMTU
+	}
+	return mtu
+}
+
+// CreateServerRequest contains parameters for creating a managed WireGuard server.
+type CreateServerRequest struct {
+	Address     string `json:"address"`               // e.g. "10.0.0.1"
+	Mask        string `json:"mask"`                  // e.g. "24" or "255.255.255.0"
+	ListenPort  int    `json:"listenPort"`            // 1-65535
+	Description string `json:"description,omitempty"` // user-facing display name; defaults to ManagedServerDescription if empty
+	Endpoint    string `json:"endpoint,omitempty"`    // custom endpoint (IP or domain)
+	DNS         string `json:"dns,omitempty"`         // custom DNS for client configs
+	MTU         int    `json:"mtu,omitempty"`         // MTU for the server interface and client configs; 0 = DefaultMTU
+	GenerateASC *bool  `json:"generateAsc,omitempty"` // nil/true => generate ASC on create; false => skip
+}
+
+// ShouldGenerateASC resolves optional GenerateASC with backward-compatible
+// default=true for callers that do not send the field.
+func (r CreateServerRequest) ShouldGenerateASC() bool {
+	return r.GenerateASC == nil || *r.GenerateASC
+}
+
+// UpdateServerRequest contains parameters for updating the managed server.
+//
+// Description, Endpoint, DNS, and MTU are pointers so callers can distinguish
+// "absent" (preserve existing) from "explicit set" (including empty/zero).
+//
+// Semantics: nil pointer = preserve, non-nil pointer = set to that value.
+// Sending an empty string or zero value via a non-nil pointer DOES clear the
+// stored field. This is the cleanest way to support clearing without
+// inventing a sentinel value, and it matches what the frontend can express.
+type UpdateServerRequest struct {
+	Address     string  `json:"address"`
+	Mask        string  `json:"mask"`
+	ListenPort  int     `json:"listenPort"`
+	Description *string `json:"description,omitempty"`
+	Endpoint    *string `json:"endpoint,omitempty"`
+	DNS         *string `json:"dns,omitempty"`
+	MTU         *int    `json:"mtu,omitempty"`
+}
+
+// AddPeerRequest contains parameters for adding a peer to the managed server.
+type AddPeerRequest struct {
+	Description string `json:"description"`
+	TunnelIP    string `json:"tunnelIP"` // e.g. "10.0.0.2/32"
+	DNS         string `json:"dns,omitempty"`
+}
+
+// UpdatePeerRequest contains parameters for updating a peer.
+// Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+// полей и профиль целиком (пустые поля объекта стирают старые байты).
+type UpdatePeerRequest struct {
+	Description string         `json:"description"`
+	TunnelIP    string         `json:"tunnelIP"`
+	DNS         string         `json:"dns,omitempty"`
+	Signature   *PeerSignature `json:"signature,omitempty"`
+}
+
+// PeerSignature — сигнатура имитации пира: пять пакетов и профиль, по
+// которому они сгенерированы ("" — введены руками).
+type PeerSignature struct {
+	Profile string `json:"profile"`
+	I1      string `json:"i1"`
+	I2      string `json:"i2"`
+	I3      string `json:"i3"`
+	I4      string `json:"i4"`
+	I5      string `json:"i5"`
+}
+
+func (p PeerSignature) packets() signature.GeneratedPackets {
+	return signature.GeneratedPackets{I1: p.I1, I2: p.I2, I3: p.I3, I4: p.I4, I5: p.I5}
+}
+
+// ErrSignatureTooLarge — суммарная длина строк I1–I5 больше
+// signature.MaxSignatureChars.
+var ErrSignatureTooLarge = errors.New("signature exceeds size limit")
+
+// ErrInvalidSignatureTag — тег <r>/<rc>/<rd> с аргументом, который нельзя
+// отдавать модулю ядра (см. signature.CheckTags).
+var ErrInvalidSignatureTag = errors.New("invalid signature packet tag")
+
+// ErrUnknownSignatureProfile — профиль имитации не из signature.Profiles.
+var ErrUnknownSignatureProfile = errors.New("unknown signature profile")
+
+// ErrSignatureGenerate — генератор сигнатуры отказал при добавлении пира.
+// AddPeer фейлится закрыто: пир без имитации выдавать молча нельзя.
+var ErrSignatureGenerate = errors.New("signature generation failed")
+
+// TogglePeerRequest contains parameters for enabling/disabling a peer.
+type TogglePeerRequest struct {
+	PublicKey string `json:"publicKey"`
+	Enabled   bool   `json:"enabled"`
+}
+
+// ManagedServerStats holds runtime statistics for the managed server.
+type ManagedServerStats struct {
+	Status string             `json:"status"` // "up" or "down"
+	Peers  []ManagedPeerStats `json:"peers"`
+}
+
+// ManagedPeerStats holds runtime statistics for a single peer.
+type ManagedPeerStats struct {
+	PublicKey     string `json:"publicKey"`
+	Endpoint      string `json:"endpoint"`
+	RxBytes       int64  `json:"rxBytes"`
+	TxBytes       int64  `json:"txBytes"`
+	LastHandshake string `json:"lastHandshake"`
+	Online        bool   `json:"online"`
+}
+
+// ManagedServerDescription is the NDMS description for our managed server.
+const ManagedServerDescription = "AWGM WG Server"
+
+// PolicyOption is the dropdown-friendly representation of an IP Policy
+// profile fetched from the router. Surfaces both the stable id (sent
+// to RCI) and the user-facing description.
+type PolicyOption struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+}
+
+// LANSegmentDTO is the catalog entry for a router LAN bridge segment.
+type LANSegmentDTO struct {
+	Name   string `json:"name"`
+	Label  string `json:"label"`
+	Subnet string `json:"subnet"`
+}

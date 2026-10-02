@@ -1,0 +1,52 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestHealthHandler_ReturnsOK(t *testing.T) {
+	h := NewHealthHandler("test-version", "instance-1")
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var body struct {
+		Success bool `json:"success"`
+		Data    struct {
+			OK         bool   `json:"ok"`
+			Version    string `json:"version"`
+			InstanceID string `json:"instanceId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Success {
+		t.Errorf("success = false, want true")
+	}
+	if !body.Data.OK {
+		t.Errorf("ok = false, want true")
+	}
+	if body.Data.Version != "test-version" {
+		t.Errorf("version = %q, want test-version", body.Data.Version)
+	}
+	if body.Data.InstanceID != "instance-1" {
+		t.Errorf("instanceId = %q, want instance-1", body.Data.InstanceID)
+	}
+}
+
+func TestHealthHandler_NonGETRejected(t *testing.T) {
+	h := NewHealthHandler("x", "instance-x")
+	req := httptest.NewRequest(http.MethodPost, "/api/health", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST: status = %d, want 405", w.Code)
+	}
+}

@@ -1,0 +1,785 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
+	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+)
+
+// fakeAwg3Service records candidate applications and exact slot restores.
+type fakeAwg3Service struct {
+	syncErr  error
+	syncCnt  int
+	data     []byte
+	enabled  bool
+	holds    int
+	releases int
+}
+
+func (f *fakeAwg3Service) Apply([]awg3endpoint.Record) error {
+	f.syncCnt++
+	return f.syncErr
+}
+func (f *fakeAwg3Service) SnapshotSlot() ([]byte, bool, error) {
+	return append([]byte(nil), f.data...), f.enabled, nil
+}
+func (f *fakeAwg3Service) RestoreSlot(data []byte, enabled bool) error {
+	f.data, f.enabled = append([]byte(nil), data...), enabled
+	return nil
+}
+func (f *fakeAwg3Service) HoldReloads() func() {
+	f.holds++
+	var once sync.Once
+	return func() { once.Do(func() { f.releases++ }) }
+}
+
+type blockingAwg3Service struct {
+	mu           sync.Mutex
+	calls        int
+	active       int
+	maxActive    int
+	firstEntered chan struct{}
+	releaseFirst chan struct{}
+}
+
+func (s *blockingAwg3Service) Apply([]awg3endpoint.Record) error {
+	s.mu.Lock()
+	s.calls++
+	call := s.calls
+	s.active++
+	if s.active > s.maxActive {
+		s.maxActive = s.active
+	}
+	if call == 1 {
+		close(s.firstEntered)
+	}
+	s.mu.Unlock()
+	if call == 1 {
+		<-s.releaseFirst
+	}
+	s.mu.Lock()
+	s.active--
+	s.mu.Unlock()
+	return nil
+}
+func (s *blockingAwg3Service) SnapshotSlot() ([]byte, bool, error) { return nil, true, nil }
+func (s *blockingAwg3Service) RestoreSlot([]byte, bool) error      { return nil }
+
+type observedAwg3TransactionLock struct {
+	mu            sync.RWMutex
+	readAttempted chan struct{}
+	once          sync.Once
+}
+
+func (l *observedAwg3TransactionLock) Lock()    { l.mu.Lock() }
+func (l *observedAwg3TransactionLock) Unlock()  { l.mu.Unlock() }
+func (l *observedAwg3TransactionLock) RUnlock() { l.mu.RUnlock() }
+func (l *observedAwg3TransactionLock) RLock() {
+	l.once.Do(func() { close(l.readAttempted) })
+	l.mu.RLock()
+}
+
+// fakeRuleLister returns a fixed rule set for the rename-conflict check.
+// err, when set, simulates a transient router failure.
+type fakeRuleLister struct {
+	rules []router.Rule
+	err   error
+}
+
+func (f *fakeRuleLister) ListRules(ctx context.Context) ([]router.Rule, error) {
+	return f.rules, f.err
+}
+
+// fakeOutboundLister feeds the early tag-collision check with a fixed set of
+// foreign outbound tags (subscription / 15-awg / composite).
+type fakeOutboundLister struct {
+	tags []string
+	err  error
+}
+
+func (f *fakeOutboundLister) ListTags(ctx context.Context) ([]awgoutbounds.TagInfo, error) {
+	out := make([]awgoutbounds.TagInfo, 0, len(f.tags))
+	for _, t := range f.tags {
+		out = append(out, awgoutbounds.TagInfo{Tag: t})
+	}
+	return out, f.err
+}
+
+// validEndpoint is a RouteBox envelope with S1-S4 ≥ 12 and a header_protection_key.
+const validEndpoint = `{
+  "success": true,
+  "data": {
+    "type": "awg",
+    "private_key": "cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0=",
+    "s1": 12, "s2": 12, "s3": 12, "s4": 12,
+    "header_protection_key": "aGVhZGVyUHJvdGVjdGlvbktleUJhc2U2NEV4YW1wbGU9",
+    "peers": [
+      {
+        "public_key": "c2VydmVyUHVibGljS2V5QmFzZTY0RXhhbXBsZTAwMD0=",
+        "address": "vpn.example.com",
+        "port": 51820
+      }
+    ]
+  }
+}`
+
+// badS endpoint: header_protection_key present but S1<12 → Parse rejects.
+const badSEndpoint = `{
+  "type": "awg",
+  "private_key": "cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0=",
+  "s1": 4, "s2": 8, "s3": 8, "s4": 8,
+  "header_protection_key": "aGVhZGVyUHJvdGVjdGlvbktleUJhc2U2NEV4YW1wbGU9",
+  "peers": [
+    {"public_key": "c2VydmVyUHVibGljS2V5QmFzZTY0RXhhbXBsZTAwMD0=", "address": "h", "port": 1}
+  ]
+}`
+
+func newAwg3TestHandler(t *testing.T) (*Awg3Handler, *awg3endpoint.Store, *fakeAwg3Service, *fakeRuleLister) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "awg3.json")
+	store := awg3endpoint.NewStore(path)
+	svc := &fakeAwg3Service{}
+	rules := &fakeRuleLister{}
+	h := NewAwg3Handler(store, svc, rules, nil)
+	return h, store, svc, rules
+}
+
+func TestAwg3Handler_HoldsReloadsThroughDurableCommit(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+	committed := false
+	h.commitCandidate = func(records []awg3endpoint.Record) error {
+		if svc.holds != 1 || svc.releases != 0 {
+			t.Fatalf("commit outside reload hold: holds=%d releases=%d", svc.holds, svc.releases)
+		}
+		committed = true
+		return store.Replace(records)
+	}
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	if rec.Code != http.StatusOK || !committed {
+		t.Fatalf("code=%d committed=%t body=%s", rec.Code, committed, rec.Body.String())
+	}
+	if svc.holds != 1 || svc.releases != 1 {
+		t.Fatalf("reload hold lifecycle: holds=%d releases=%d", svc.holds, svc.releases)
+	}
+}
+
+func decodeAwg3List(t *testing.T, body []byte) []Awg3TunnelDTO {
+	t.Helper()
+	var env struct {
+		Success bool            `json:"success"`
+		Data    []Awg3TunnelDTO `json:"data"`
+		Error   bool            `json:"error"`
+		Message string          `json:"message"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode envelope: %v (body=%s)", err, body)
+	}
+	return env.Data
+}
+
+// awg3RecordToDTO must surface AWG3 device-timers when present, and omit them
+// (leave empty → dropped by omitempty) when the config carries none.
+func TestAwg3RecordToDTO_Timers(t *testing.T) {
+	withTimers := awg3endpoint.Record{
+		ID:  "awg3-abc",
+		Tag: "amsterdam",
+		Endpoint: json.RawMessage(`{"type":"awg","header_protection_key":"h",` +
+			`"rekey_timeout":"5","rekey_after_time":"120-150","reject_after_time":"180",` +
+			`"keepalive_timeout":"25","max_handshake_attempts":"5",` +
+			`"peers":[{"address":"vpn.example.com","port":51820}]}`),
+	}
+	dto := awg3RecordToDTO(withTimers)
+	if dto.RekeyTimeout != "5" || dto.RekeyAfterTime != "120-150" || dto.RejectAfterTime != "180" ||
+		dto.KeepaliveTimeout != "25" || dto.MaxHandshakeAttempts != "5" {
+		t.Fatalf("timers not surfaced: %+v", dto)
+	}
+	if b, _ := json.Marshal(dto); !strings.Contains(string(b), "rekeyTimeout") {
+		t.Fatalf("timers must appear in JSON: %s", b)
+	}
+
+	noTimers := awg3endpoint.Record{
+		ID:       "awg3-xyz",
+		Tag:      "berlin",
+		Endpoint: json.RawMessage(`{"type":"awg","peers":[{"address":"h","port":1}]}`),
+	}
+	dto2 := awg3RecordToDTO(noTimers)
+	if dto2.RekeyTimeout != "" || dto2.RekeyAfterTime != "" || dto2.RejectAfterTime != "" ||
+		dto2.KeepaliveTimeout != "" || dto2.MaxHandshakeAttempts != "" {
+		t.Fatalf("absent timers must stay empty: %+v", dto2)
+	}
+	if b, _ := json.Marshal(dto2); strings.Contains(string(b), "rekeyTimeout") ||
+		strings.Contains(string(b), "rekeyAfterTime") {
+		t.Fatalf("omitempty must drop absent timers from JSON: %s", b)
+	}
+}
+
+func TestAwg3Handler_ImportValid(t *testing.T) {
+	h, _, svc, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Handle(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST valid: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.syncCnt != 1 {
+		t.Fatalf("expected Sync called once, got %d", svc.syncCnt)
+	}
+	list := decodeAwg3List(t, rec.Body.Bytes())
+	if len(list) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(list))
+	}
+	dto := list[0]
+	if dto.Tag != "amsterdam" {
+		t.Errorf("tag = %q, want amsterdam", dto.Tag)
+	}
+	if dto.Host != "vpn.example.com:51820" {
+		t.Errorf("host = %q, want vpn.example.com:51820", dto.Host)
+	}
+	if !dto.HeaderProtection {
+		t.Errorf("headerProtection = false, want true")
+	}
+	if dto.ID == "" || !strings.HasPrefix(dto.ID, "awg3-") {
+		t.Errorf("id = %q, want awg3- prefix", dto.ID)
+	}
+	// DTO must not leak the raw private key.
+	if strings.Contains(rec.Body.String(), "private_key") {
+		t.Errorf("response leaks private_key: %s", rec.Body.String())
+	}
+}
+
+func TestAwg3HandlerSerializesFullMutationTransaction(t *testing.T) {
+	store := awg3endpoint.NewStore(filepath.Join(t.TempDir(), "awg3.json"))
+	svc := &blockingAwg3Service{firstEntered: make(chan struct{}), releaseFirst: make(chan struct{})}
+	h := NewAwg3Handler(store, svc, &fakeRuleLister{}, nil)
+
+	runImport := func(tag string) <-chan int {
+		done := make(chan int, 1)
+		go func() {
+			body := `{"tag":"` + tag + `","config":` + validEndpoint + `}`
+			rec := httptest.NewRecorder()
+			h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+			done <- rec.Code
+		}()
+		return done
+	}
+
+	firstDone := runImport("first")
+	<-svc.firstEntered
+	secondDone := runImport("second")
+	secondBlocked := false
+	select {
+	case <-secondDone:
+	case <-time.After(50 * time.Millisecond):
+		secondBlocked = true
+	}
+	close(svc.releaseFirst)
+	if code := <-firstDone; code != http.StatusOK {
+		t.Fatalf("first import code=%d", code)
+	}
+	if !secondBlocked {
+		t.Fatal("second mutation completed while the first store/slot/DNS transaction was in flight")
+	}
+	select {
+	case code := <-secondDone:
+		if code != http.StatusOK {
+			t.Fatalf("second import code=%d", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second mutation did not resume")
+	}
+	svc.mu.Lock()
+	maxActive := svc.maxActive
+	svc.mu.Unlock()
+	if maxActive != 1 {
+		t.Fatalf("concurrent Sync calls=%d, want 1", maxActive)
+	}
+}
+
+func TestAwg3HandlerListWaitsForMutationTransaction(t *testing.T) {
+	store := awg3endpoint.NewStore(filepath.Join(t.TempDir(), "awg3.json"))
+	svc := &blockingAwg3Service{firstEntered: make(chan struct{}), releaseFirst: make(chan struct{})}
+	h := NewAwg3Handler(store, svc, &fakeRuleLister{}, nil)
+	lock := &observedAwg3TransactionLock{readAttempted: make(chan struct{})}
+	h.mutationMu = lock
+
+	mutationDone := make(chan int, 1)
+	go func() {
+		body := `{"tag":"candidate","config":` + validEndpoint + `}`
+		rec := httptest.NewRecorder()
+		h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+		mutationDone <- rec.Code
+	}()
+	<-svc.firstEntered // Store.Add finished; slot/DNS transaction is still open.
+
+	readDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		h.Handle(rec, httptest.NewRequest(http.MethodGet, "/api/awg3-endpoints", nil))
+		readDone <- rec
+	}()
+	<-lock.readAttempted
+	select {
+	case rec := <-readDone:
+		t.Fatalf("GET completed inside the mutation transaction: code=%d body=%s", rec.Code, rec.Body.String())
+	default:
+	}
+
+	close(svc.releaseFirst)
+	if code := <-mutationDone; code != http.StatusOK {
+		t.Fatalf("import code=%d", code)
+	}
+	select {
+	case rec := <-readDone:
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		list := decodeAwg3List(t, rec.Body.Bytes())
+		if len(list) != 1 || list[0].Tag != "candidate" {
+			t.Fatalf("post-commit GET=%+v", list)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("GET did not resume after mutation commit")
+	}
+}
+
+func TestHandleImport_Conf(t *testing.T) {
+	h, _, _, _ := newAwg3TestHandler(t)
+	conf := "[Interface]\nPrivateKey = K==\nAddress = 10.10.0.2/32\n[Peer]\nPublicKey = P==\nEndpoint = vpn.example.com:51820\nAllowedIPs = 0.0.0.0/0"
+	body, _ := json.Marshal(map[string]any{"tag": "awg-conf", "config": conf}) // config — строка
+	req := httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	h.handleImport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "awg-conf") {
+		t.Fatalf("тег не в ответе: %s", rec.Body.String())
+	}
+}
+
+func TestAwg3Handler_ImportBadSchema(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + badSEndpoint + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Handle(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST bad-S: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run on parse failure, got %d", svc.syncCnt)
+	}
+	if n := store.Len(); n != 0 {
+		t.Errorf("store must stay empty, got %d", n)
+	}
+}
+
+func TestAwg3Handler_ImportDuplicateTag(t *testing.T) {
+	h, _, _, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body))
+	h.Handle(httptest.NewRecorder(), req)
+
+	// second import with same tag
+	req2 := httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body))
+	rec2 := httptest.NewRecorder()
+	h.Handle(rec2, req2)
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate tag: code=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestAwg3Handler_Delete(t *testing.T) {
+	h, store, _, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if del.Code != http.StatusOK {
+		t.Fatalf("DELETE: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if n := store.Len(); n != 0 {
+		t.Errorf("store must be empty after delete, got %d", n)
+	}
+	if len(decodeAwg3List(t, del.Body.Bytes())) != 0 {
+		t.Errorf("delete response list not empty")
+	}
+}
+
+// A referenced tag blocks delete with 409 before any store mutation or Sync.
+func TestAwg3Handler_DeleteConflict(t *testing.T) {
+	h, store, svc, rules := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	// a routing rule references the tag → delete must 409
+	rules.rules = []router.Rule{{Action: "route", Outbound: "amsterdam"}}
+	svc.syncCnt = 0
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if del.Code != http.StatusConflict {
+		t.Fatalf("DELETE conflict: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if _, ok := store.Get(id); !ok {
+		t.Errorf("record must survive a blocked delete")
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run on blocked delete, got %d", svc.syncCnt)
+	}
+}
+
+// fakeRefLister дополнительно реализует OutboundRefLister: ссылки вне обычных
+// правил (route.final, член композита, dns detour, fakeip).
+type fakeRefLister struct {
+	fakeRuleLister
+	locs []string
+}
+
+func (f *fakeRefLister) OutboundReferenceLocations(string) []string { return f.locs }
+
+// Ссылка вне обычных route-правил обязана давать внятный 409 ДО Sync: иначе
+// удаление доезжало до sing-box check и возвращало непрозрачный 500.
+func TestAwg3Handler_DeleteConflictOnNonRuleReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "awg3.json")
+	store := awg3endpoint.NewStore(path)
+	svc := &fakeAwg3Service{}
+	refs := &fakeRefLister{}
+	h := NewAwg3Handler(store, svc, refs, nil)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	// Обычных правил нет — ссылка только в route.final.
+	refs.locs = []string{"route.final"}
+	svc.syncCnt = 0
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if del.Code != http.StatusConflict {
+		t.Fatalf("DELETE route.final-ref: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run on blocked delete, got %d", svc.syncCnt)
+	}
+	if _, ok := store.Get(id); !ok {
+		t.Errorf("record must survive a blocked delete")
+	}
+
+	// Ссылок нет — удаление проходит.
+	refs.locs = nil
+	ok := httptest.NewRecorder()
+	h.Handle(ok, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if ok.Code != http.StatusOK {
+		t.Fatalf("DELETE without refs: code=%d body=%s", ok.Code, ok.Body.String())
+	}
+}
+
+// A ListRules failure during delete surfaces as an honest 500, not a false 409.
+func TestAwg3Handler_DeleteListRulesError(t *testing.T) {
+	h, store, svc, rules := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	rules.err = errors.New("router unreachable")
+	svc.syncCnt = 0
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if del.Code != http.StatusInternalServerError {
+		t.Fatalf("DELETE ListRules-fail: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if _, ok := store.Get(id); !ok {
+		t.Errorf("record must survive when the reference check fails")
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run when the reference check fails, got %d", svc.syncCnt)
+	}
+}
+
+func TestAwg3Handler_Rename(t *testing.T) {
+	h, store, _, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"berlin"}`)))
+	if patch.Code != http.StatusOK {
+		t.Fatalf("PATCH rename: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	rec2, _ := store.Get(id)
+	if rec2.Tag != "berlin" {
+		t.Errorf("tag after rename = %q, want berlin", rec2.Tag)
+	}
+}
+
+func TestAwg3Handler_RenameConflict(t *testing.T) {
+	h, store, _, rules := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	// a routing rule references the old tag → rename must 409
+	rules.rules = []router.Rule{{Action: "route", Outbound: "amsterdam"}}
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"berlin"}`)))
+	if patch.Code != http.StatusConflict {
+		t.Fatalf("PATCH rename conflict: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	got, _ := store.Get(id)
+	if got.Tag != "amsterdam" {
+		t.Errorf("tag must be unchanged on conflict, got %q", got.Tag)
+	}
+}
+
+func TestAwg3Handler_EndpointMutationReconcilesDNSRoutesAndRollsBackOnFailure(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+	calls := 0
+	h.SetAfterMutation(func([]awg3endpoint.Record) (func() error, error) {
+		calls++
+		return nil, errors.New("dns route target rejected")
+	})
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.handleImport(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	if rec.Code == http.StatusOK {
+		t.Fatalf("import unexpectedly succeeded: %s", rec.Body.String())
+	}
+	if calls != 1 || svc.syncCnt != 1 {
+		t.Fatalf("afterMutation calls=%d awg applies=%d, want 1 and 1", calls, svc.syncCnt)
+	}
+	list, err := store.List()
+	if err != nil || len(list) != 0 {
+		t.Fatalf("endpoint store not rolled back: list=%v err=%v", list, err)
+	}
+}
+
+// Sync-failure rollback: a rejected import is undone, store stays empty.
+func TestAwg3Handler_ImportSyncRollback(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+	svc.syncErr = errors.New("sing-box check failed")
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST sync-fail: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.syncCnt != 1 {
+		t.Errorf("expected Sync called once, got %d", svc.syncCnt)
+	}
+	if n := store.Len(); n != 0 {
+		t.Errorf("store must be rolled back to empty, got %d", n)
+	}
+}
+
+// Sync-failure rollback: a rejected delete restores the record.
+func TestAwg3Handler_DeleteSyncRollback(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	svc.syncErr = errors.New("sing-box check failed")
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+
+	if del.Code != http.StatusInternalServerError {
+		t.Fatalf("DELETE sync-fail: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if _, ok := store.Get(id); !ok {
+		t.Errorf("record must be restored after failed delete")
+	}
+	if n := store.Len(); n != 1 {
+		t.Errorf("store must hold the restored record, got %d", n)
+	}
+}
+
+// Sync-failure rollback: a rejected rename reverts the tag to its old value.
+func TestAwg3Handler_RenameSyncRollback(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	svc.syncErr = errors.New("sing-box check failed")
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"berlin"}`)))
+
+	if patch.Code != http.StatusInternalServerError {
+		t.Fatalf("PATCH sync-fail: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	got, _ := store.Get(id)
+	if got.Tag != "amsterdam" {
+		t.Errorf("tag must be rolled back to amsterdam, got %q", got.Tag)
+	}
+}
+
+// A ListRules failure must surface as an honest 500, not a false 409, and
+// leave the tag unchanged.
+func TestAwg3Handler_RenameListRulesError(t *testing.T) {
+	h, store, svc, rules := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	rules.err = errors.New("router unreachable")
+	svc.syncCnt = 0
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"berlin"}`)))
+
+	if patch.Code != http.StatusInternalServerError {
+		t.Fatalf("PATCH ListRules-fail: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	got, _ := store.Get(id)
+	if got.Tag != "amsterdam" {
+		t.Errorf("tag must be unchanged on ListRules error, got %q", got.Tag)
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run when the reference check fails, got %d", svc.syncCnt)
+	}
+}
+
+// A DELETE / PATCH on an unknown id is a 404, not a 400.
+func TestAwg3Handler_NotFound(t *testing.T) {
+	h, _, svc, _ := newAwg3TestHandler(t)
+
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/awg3-nope", nil))
+	if del.Code != http.StatusNotFound {
+		t.Fatalf("DELETE unknown: code=%d body=%s", del.Code, del.Body.String())
+	}
+
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/awg3-nope",
+		strings.NewReader(`{"tag":"berlin"}`)))
+	if patch.Code != http.StatusNotFound {
+		t.Fatalf("PATCH unknown: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run for a not-found id, got %d", svc.syncCnt)
+	}
+}
+
+// Import of a tag already owned by a foreign outbound (subscription / 15-awg /
+// composite) is rejected early with a clear 400, before Sync.
+func TestAwg3Handler_ImportOutboundTagCollision(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+	h.SetOutboundTagLister(&fakeOutboundLister{tags: []string{"amsterdam"}})
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("import outbound-collision: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run when the tag collides, got %d", svc.syncCnt)
+	}
+	if n := store.Len(); n != 0 {
+		t.Errorf("store must stay empty on collision, got %d", n)
+	}
+}
+
+// Rename onto a foreign outbound tag is rejected early with a 400.
+func TestAwg3Handler_RenameOutboundTagCollision(t *testing.T) {
+	h, store, _, _ := newAwg3TestHandler(t)
+	h.SetOutboundTagLister(&fakeOutboundLister{tags: []string{"berlin"}})
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"berlin"}`)))
+	if patch.Code != http.StatusBadRequest {
+		t.Fatalf("rename outbound-collision: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	if got, _ := store.Get(id); got.Tag != "amsterdam" {
+		t.Errorf("tag must be unchanged on collision, got %q", got.Tag)
+	}
+}
+
+// Renaming a record to its own tag stays OK even though the outbound catalog
+// reports that tag (the merged catalog includes the awg3 tags themselves).
+func TestAwg3Handler_RenameToOwnTagOK(t *testing.T) {
+	h, _, _, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	// The catalog reports this record's own tag (merged catalog includes awg3
+	// tags); rename to the same tag must still pass the collision guard.
+	h.SetOutboundTagLister(&fakeOutboundLister{tags: []string{"amsterdam"}})
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"amsterdam"}`)))
+	if patch.Code != http.StatusOK {
+		t.Fatalf("rename to own tag: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+}
+
+// sanity: store file is written to disk (real store, not mock).
+func TestAwg3Handler_PersistsToDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "awg3.json")
+	store := awg3endpoint.NewStore(path)
+	h := NewAwg3Handler(store, &fakeAwg3Service{}, &fakeRuleLister{}, nil)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	h.Handle(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("store file not written: %v", err)
+	}
+}

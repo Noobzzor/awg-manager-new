@@ -1,0 +1,1786 @@
+@import 'tailwindcss';
+@import '@skeletonlabs/skeleton';
+@import './lib/styles/route-actions.css';
+@import './lib/styles/tunnel-layout.css';
+@import './lib/components/servers/serverCardShared.css';
+@import './lib/components/sb-router/outboundTone.css';
+
+/* ─── Self-hosted IBM Plex (Latin + Cyrillic subsets) ─── */
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-cyrillic-400-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-cyrillic-500-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-cyrillic-600-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 700; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 700; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-cyrillic-700-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-cyrillic-400-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-cyrillic-500-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-cyrillic-600-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+
+/* ─── Design tokens (Tailwind v4 @theme — single source of truth) ─── */
+@theme {
+  /* Colors — semantic */
+  --color-accent: #7aa2f7;
+  --color-accent-hover: #6e8bbb;
+  --color-success: #9ece6a;
+  --color-error: #f7768e;
+  --color-warning: #e0af68;
+  --color-info: #7dcfff;
+
+  /* Surfaces — Tokyo Night ramp: editor → sidebar/inset → highlight */
+  --color-bg-primary: #1a1b26;
+  --color-bg-secondary: #16161e;
+  --color-bg-tertiary: #24283b;
+  --color-bg-hover: #292e42;
+  /** Settings cards/panels — inset (secondary); controls — highlight (tertiary) */
+  --color-settings-surface-bg: var(--color-bg-secondary);
+  /** Settings controls — highlight layer; light theme uses darker inset (tertiary) */
+  --color-settings-control-bg: var(--color-bg-tertiary);
+  /** Icon tile on route cards — contrasts with --color-bg-secondary card surface */
+  --color-icon-tile-bg: var(--color-bg-tertiary);
+
+  /* Text */
+  --color-text-primary: #c0caf5;
+  --color-text-secondary: #a9b1d6;
+  --color-text-muted: #737aa2;
+
+  /* Borders */
+  --color-border: #3b4261;
+  --color-border-hover: #565f89;
+
+  /* Typography */
+  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', SFMono-Regular, ui-monospace, monospace;
+
+  /* Radii — bumped 8/4 → 12/6 per design */
+  --radius: 12px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --t-fast: 150ms;
+  --t-med: 200ms;
+
+  /* Shadow */
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+  /* Tunneled row tint (3% accent wash for tables) */
+  --color-tunneled-row: rgba(122, 162, 247, 0.03);
+
+  /* Semantic tints — derived from semantic colors so light theme tracks automatically */
+  --color-error-tint: color-mix(in srgb, var(--color-error) 18%, transparent);
+  --color-error-border: color-mix(in srgb, var(--color-error) 40%, transparent);
+  --color-warning-tint: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  --color-warning-border: color-mix(in srgb, var(--color-warning) 40%, transparent);
+  --color-accent-tint: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  --color-accent-border: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  --color-success-tint: color-mix(in srgb, var(--color-success) 18%, transparent);
+  --color-success-border: color-mix(in srgb, var(--color-success) 40%, transparent);
+  --color-broken: #f97316;
+  --color-broken-tint: color-mix(in srgb, var(--color-broken) 14%, transparent);
+  --color-broken-border: color-mix(in srgb, var(--color-broken) 40%, transparent);
+  --color-info-tint: color-mix(in srgb, var(--color-info) 18%, transparent);
+  --color-info-border: color-mix(in srgb, var(--color-info) 40%, transparent);
+  --color-muted-tint: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
+  --color-muted-border: color-mix(in srgb, var(--color-text-secondary) 30%, transparent);
+
+  /* Latency tier palette — thresholds differ per UI; colors are shared. */
+  --latency-color-ok: var(--color-success);
+  --latency-color-slow: var(--color-warning);
+  --latency-color-fail: var(--color-error);
+  --latency-bar-ok: color-mix(in srgb, var(--color-success) 72%, transparent);
+  --latency-bar-slow: color-mix(in srgb, var(--color-warning) 72%, transparent);
+  --latency-bar-fail: color-mix(in srgb, var(--color-error) 72%, transparent);
+  --latency-dot-ok-shadow: var(--color-success-border);
+  --latency-dot-slow-shadow: var(--color-warning-border);
+  --latency-dot-fail-shadow: var(--color-error-border);
+
+  /* Override Tailwind utility radii to match our scale */
+  --radius-md: var(--radius-sm);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+
+  /* ─── Z-index scale (single source of truth for stacking) ───
+     Local stacking (z:1–10) lives in components and is intentionally not
+     tokenized — it's contained inside its own stacking context. These
+     tokens cover the global layering only. */
+  --z-sticky-secondary: 50; /* TunnelEditHeader sub-sticky under AppHeader */
+  --z-page-overlay: 60;     /* tab dropdowns, popovers, member-pickers */
+  --z-sticky-header: 80;    /* AppHeader sticky bar */
+  --z-fab: 95;              /* floating action buttons (below drawers) */
+  --z-drawer-backdrop: 90;  /* hamburger / drawer dimming layer */
+  --z-drawer: 100;          /* hamburger panel, SideDrawer panel */
+  --z-full-overlay: 150;    /* full-screen blocking screens (e.g. kernel-unavailable) */
+  --z-modal: 200;           /* Modal */
+  --z-floating: 1000;       /* Floating-UI portal'd dropdowns, context menus */
+  --z-toast: 1000;          /* Toast container — same tier as floating */
+
+  /** Межблочный зазор на странице настроек и в формах редактирования */
+  --settings-gap: 0.765rem;
+}
+
+/* ─── Light theme override ─── */
+html.light, [data-theme="light"] {
+  --color-accent: #4f6e9c;
+  --color-accent-hover: #6082b0;
+  --color-success: #5b8568;
+  --color-error: #9a4f60;
+  --color-warning: #a07a3f;
+  --color-info: #547e91;
+
+  --color-bg-primary: #e9e9ed;
+  --color-bg-secondary: #f0f0f3;
+  --color-bg-tertiary: #d5d6db;
+  --color-bg-hover: #cacbd2;
+  --color-settings-surface-bg: var(--color-bg-secondary);
+  --color-settings-control-bg: var(--color-bg-tertiary);
+
+  --color-text-primary: #343b58;
+  --color-text-secondary: #434754;
+  --color-text-muted: #545760;
+
+  --color-border: #b8b9c0;
+  --color-border-hover: #9a9ba2;
+
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+
+  --color-tunneled-row: rgba(46, 125, 233, 0.05);
+}
+
+/* ─── Backwards-compatible aliases (will be removed phase-by-phase) ─── */
+:root {
+  --accent: var(--color-accent);
+  --accent-hover: var(--color-accent-hover);
+  --success: var(--color-success);
+  --error: var(--color-error);
+  --warning: var(--color-warning);
+  --info: var(--color-info);
+  --bg-primary: var(--color-bg-primary);
+  --bg-secondary: var(--color-bg-secondary);
+  --bg-tertiary: var(--color-bg-tertiary);
+  --bg-hover: var(--color-bg-hover);
+  --icon-tile-bg: var(--color-icon-tile-bg);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --text-tertiary: var(--color-text-muted);
+  --border: var(--color-border);
+  --border-hover: var(--color-border-hover);
+
+  /* Log subgroup family palette — fg/bg/border per family. */
+  --family-routing-fg:           #5b8def;
+  --family-routing-bg:           rgba(91, 141, 239, 0.12);
+  --family-routing-bd:           rgba(91, 141, 239, 0.32);
+
+  --family-lifecycle-fg:         #e89243;
+  --family-lifecycle-bg:         rgba(232, 146, 67, 0.12);
+  --family-lifecycle-bd:         rgba(232, 146, 67, 0.32);
+
+  --family-network-fg:           #4caf78;
+  --family-network-bg:           rgba(76, 175, 120, 0.12);
+  --family-network-bd:           rgba(76, 175, 120, 0.32);
+
+  --family-policy-fg:            #a874e0;
+  --family-policy-bg:            rgba(168, 116, 224, 0.12);
+  --family-policy-bd:            rgba(168, 116, 224, 0.32);
+
+  --family-system-fg:            #8a9099;
+  --family-system-bg:            rgba(138, 144, 153, 0.12);
+  --family-system-bd:            rgba(138, 144, 153, 0.32);
+
+  --family-feature-fg:           #2dbdb6;
+  --family-feature-bg:           rgba(45, 189, 182, 0.12);
+  --family-feature-bd:           rgba(45, 189, 182, 0.32);
+
+  --family-singbox-runtime-fg:   #c46b8a;
+  --family-singbox-runtime-bg:   rgba(196, 107, 138, 0.12);
+  --family-singbox-runtime-bd:   rgba(196, 107, 138, 0.32);
+
+  /* Sing-box / subscription card typography — AWG TunnelCard .view-compact (px). */
+  --sbx-card-title: 14px;
+  --sbx-card-title-line-height: 1.5;
+  --sbx-card-meta: 11px;
+  --sbx-card-note: 11px;
+  --sbx-card-label: 10px;
+  --sbx-card-value: 12px;
+  --sbx-card-badge: 10px;
+  --sbx-card-status: 12px;
+  --sbx-card-action: 11px;
+  --sbx-card-action-dense: 10px;
+  /* Status LED beside tunnel/subscription titles (list delay column uses --sbx-status-dot). */
+  --sbx-status-dot: 8px;
+  --sbx-status-dot-dense: 6px;
+
+  /* Page / header gutters (по умолчанию; компакт — data-layout-compact). */
+  --layout-gutter-x: 1.5rem;
+  --layout-gutter-y: 1.5rem;
+  --layout-gutter-y-top: var(--layout-gutter-y);
+  --layout-gutter-y-bottom: var(--layout-gutter-y);
+  --header-gutter-x: 1.25rem;
+
+  /* ─── sb-router redesign aliases (design tokens.css mapping) ─── */
+  /* (--bg-*, --text-*, --border*, --accent, --accent-hover, --success/error/warning/info
+     already declared above; only the missing aliases are added here) */
+  --accent-soft:  var(--color-accent-tint);
+  --accent-line:  var(--color-accent-border);
+
+  /* ─── sb-router: spacing scale (compact) ─── */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+
+  /* ─── sb-router: compact type scale ─── */
+  --fs-xs:   0.6875rem;
+  --fs-sm:   0.75rem;
+  --fs-md:   0.8125rem;
+  --fs-base: 0.875rem;
+  --fs-lg:   1rem;
+  --fs-h4:   1.125rem;
+  --fs-h3:   1.25rem;
+  --fs-h2:   1.5rem;
+  --fs-h1:   1.75rem;
+
+  /* ─── sb-router: line heights ─── */
+  --lh-tight: 1.2;
+  --lh-body:  1.5;
+}
+
+/* List mode rem scale — see tunnel-layout.css */
+
+/* Компактная ширина — как в v2.8.2 / базовом режиме: main 960px, узкие боковые поля. */
+html[data-layout-compact='true'] {
+  --layout-gutter-x: 0;
+  --layout-gutter-y-top: 2.5rem;
+  --layout-gutter-y-bottom: 1.5rem;
+  --header-gutter-x: 1rem;
+}
+
+html[data-layout-compact='true'] .page-container {
+  max-width: 100% !important;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --layout-gutter-x: 0.75rem;
+    --layout-gutter-y: 0.75rem;
+  }
+}
+
+/* ─── Reset ─── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* height: auto обязателен: overflow-x:hidden на body делает его скролл-контейнером
+   (used overflow-y становится auto), и при height:100% страница прокручивается
+   внутри body, а корневой скроллер пуст — мобильный Chrome ломает на этом
+   скрытие адресной строки и overscroll (#701). */
+html, body {
+  height: auto;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  overflow-x: hidden;
+}
+
+#app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Typography ─── */
+h1, h2, h3, h4 {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+h1 { font-size: 1.75rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.1rem; }
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--color-accent-hover);
+}
+
+/* Form elements */
+/* Form-control reset for text-shaped inputs only. Checkbox/radio keep
+ * their native rendering — applying width:100% / padding / bg here
+ * stretched checkboxes to fill the parent flex row and broke layouts
+ * that mix a checkbox with text content (e.g. import preview rows). */
+input:not([type="checkbox"]):not([type="radio"]), textarea, select {
+	width: 100%;
+	padding: 0.5rem 0.75rem;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-size: 0.875rem;
+	transition: border-color 0.15s ease;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus, select:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+
+input::placeholder {
+	color: var(--text-muted);
+}
+
+.setting-row input, .setting-row textarea, .setting-row select {
+	max-width: 276px;
+}
+
+label {
+	display: block;
+	margin-bottom: 0.25rem;
+	font-size: 0.875rem;
+	color: var(--text-secondary);
+}
+
+.form-group {
+	margin-bottom: 1rem;
+}
+
+.form-hint {
+	font-size: 0.75rem;
+	color: var(--text-muted);
+	margin-top: 0.25rem;
+}
+
+/* Cards */
+.card {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 1rem;
+	cursor: default;
+}
+
+.card-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 1rem;
+	padding-bottom: 0.75rem;
+	border-bottom: 1px solid var(--border);
+}
+
+/* Status badges */
+.badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.25rem 0.5rem;
+	border-radius: var(--radius-sm);
+	font-size: 0.75rem;
+	font-weight: 500;
+}
+
+.badge-success {
+	background: rgba(158, 206, 106, 0.15);
+	color: var(--success);
+}
+
+.badge-error {
+	background: rgba(247, 118, 142, 0.15);
+	color: var(--error);
+}
+
+.badge-warning {
+	background: rgba(224, 175, 104, 0.15);
+	color: var(--warning);
+}
+
+/* Layout utilities */
+.container {
+	max-width: 1200px;
+	margin: 0 auto;
+	padding: 0 1rem;
+}
+
+/* Страницы редактирования (AWG / sing-box / подписка) — уже основной колонки. */
+.edit-wrapper {
+	max-width: 1200px;
+	margin: 0 auto;
+	width: 100%;
+}
+
+.tab-content {
+	padding: var(--settings-gap) 0;
+}
+
+.tab-form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--settings-gap);
+}
+
+.flex {
+	display: flex;
+}
+
+.flex-col {
+	flex-direction: column;
+}
+
+.items-center {
+	align-items: center;
+}
+
+.justify-between {
+	justify-content: space-between;
+}
+
+.gap-1 { gap: 0.25rem; }
+.gap-2 { gap: 0.5rem; }
+.gap-3 { gap: 0.75rem; }
+.gap-4 { gap: 1rem; }
+
+.mt-1 { margin-top: 0.25rem; }
+.mt-2 { margin-top: 0.5rem; }
+.mt-3 { margin-top: 0.75rem; }
+.mt-4 { margin-top: 1rem; }
+
+.mb-2 { margin-bottom: 0.5rem; }
+.mb-4 { margin-bottom: 1rem; }
+
+/* Loading spinner */
+.spinner {
+	width: 1rem;
+	height: 1rem;
+	border: 2px solid var(--border);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+
+/* Loading-centered wrapper (used by tab-loading panels and full-page loaders) */
+.loading-centered {
+	min-height: 220px;
+	display: grid;
+	place-items: center;
+}
+
+/* Page layout */
+.page {
+	flex: 1;
+	padding: 1.5rem;
+}
+
+.page-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 1.5rem;
+}
+
+.page-title {
+	font-size: 1.5rem;
+	font-weight: 600;
+}
+
+.back-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--text-secondary);
+	font-size: 13px;
+	padding: 6px 10px;
+	border-radius: 6px;
+	transition: all 0.15s;
+}
+
+.back-link:hover {
+	background: var(--bg-tertiary);
+	color: var(--text-primary);
+}
+
+/* Empty state */
+.empty-state {
+	text-align: center;
+	padding: 3rem;
+	color: var(--text-muted);
+}
+
+/* Toast notifications */
+.toast-container {
+	position: fixed;
+	bottom: 1rem;
+	right: 1rem;
+	z-index: var(--z-toast);
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.toast {
+	padding: 0.75rem 1rem;
+	border-radius: var(--radius);
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	box-shadow: var(--shadow);
+	min-width: 280px;
+	max-width: 400px;
+	animation: slideIn 0.2s ease;
+	font: inherit;
+	color: inherit;
+	text-align: left;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.toast-message {
+	flex: 1;
+	background: transparent;
+	border: 0;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+	padding: 0;
+	font: inherit;
+	white-space: pre-line;
+}
+
+.toast-action {
+	color: var(--accent);
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.toast-action:hover {
+	text-decoration: underline;
+}
+
+.toast-dismiss-all {
+	padding: 0.375rem 0.75rem;
+	border-radius: var(--radius);
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	box-shadow: var(--shadow);
+	font: inherit;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+	cursor: pointer;
+	align-self: flex-end;
+	animation: slideIn 0.2s ease;
+}
+
+.toast-dismiss-all:hover {
+	color: var(--text-primary);
+	background: var(--bg-hover);
+}
+
+.toast-success {
+	border-left: 3px solid var(--success);
+}
+
+.toast-error {
+	border-left: 3px solid var(--error);
+}
+
+.toast-warning {
+	border-left: 3px solid var(--warning);
+}
+
+.toast-info {
+	border-left: 3px solid var(--info);
+}
+
+@keyframes slideIn {
+	from {
+		transform: translateX(100%);
+		opacity: 0;
+	}
+	to {
+		transform: translateX(0);
+		opacity: 1;
+	}
+}
+
+/* Form validation */
+.error-text {
+	font-size: 0.6875rem;
+	color: var(--error, #ef4444);
+	margin-top: 0;
+	opacity: 0;
+	transform: translateY(-4px);
+	transition: opacity 0.2s, transform 0.2s, margin-top 0.2s;
+}
+
+.error-text.visible {
+	opacity: 1;
+	transform: translateY(0);
+	margin-top: 0.375rem;
+}
+
+@keyframes shake {
+	0%, 100% { transform: translateX(0); }
+	10%, 50%, 90% { transform: translateX(-3px); }
+	30%, 70% { transform: translateX(3px); }
+}
+
+.shake {
+	animation: shake 0.4s ease-in-out;
+}
+
+/* Settings page */
+.section-label {
+	font-size: 0.6875rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-muted);
+	margin-bottom: 0.5rem;
+}
+
+.settings-block {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.settings-block > .card {
+	background: var(--color-settings-surface-bg);
+}
+
+.settings-layout .card > .settings-section-label.header + .setting-row {
+	padding-top: 0;
+}
+
+.settings-layout {
+	display: flex;
+	flex-direction: column;
+	gap: var(--settings-gap);
+}
+
+/* Shared text field for API/MCP keys (settings page + MCP card): monospace,
+ * full width, wraps a long token. `input.` beats `.setting-row input` above. */
+input.api-key-input {
+	width: 100%;
+	max-width: none;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.8125rem;
+	word-break: break-all;
+	background: var(--color-settings-control-bg, var(--bg-secondary));
+}
+
+/* Settings — controls on inset cards use highlight layer */
+.settings-layout .btn.variant-secondary {
+	background: var(--color-settings-control-bg);
+}
+
+.settings-layout .btn.variant-secondary:hover:not(:disabled):not(.is-disabled) {
+	background: var(--color-bg-hover);
+}
+
+.settings-layout .toggle-container .toggle-slider {
+	background: var(--color-settings-control-bg);
+}
+
+.settings-layout .toggle-container:hover input:not(:checked) ~ .toggle-slider {
+	background: var(--color-bg-hover);
+}
+
+.settings-layout .segmented-control {
+	background: var(--color-settings-control-bg);
+}
+
+.settings-layout .field .trigger {
+	background: var(--color-settings-control-bg);
+}
+
+.settings-layout .btn.variant-outline-primary {
+	background: var(--color-settings-control-bg);
+}
+
+/* Settings text/number fields — one surface for inputs, dropdowns, toggles */
+.settings-layout input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='hidden']),
+.settings-layout textarea,
+.settings-layout select {
+	box-sizing: border-box;
+	background: var(--color-settings-control-bg);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	color: var(--color-text-primary);
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.4;
+	transition: border-color var(--t-fast) ease;
+}
+
+.settings-layout input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='hidden'])::placeholder,
+.settings-layout textarea::placeholder {
+	color: var(--color-text-muted);
+}
+
+.settings-layout input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='hidden']):focus,
+.settings-layout textarea:focus,
+.settings-layout select:focus {
+	outline: none;
+	border-color: var(--color-accent);
+}
+
+.settings-layout input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='hidden']):disabled,
+.settings-layout textarea:disabled,
+.settings-layout select:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.settings-layout input[type='number']::-webkit-outer-spin-button,
+.settings-layout input[type='number']::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+.settings-layout input[type='number'] {
+	-moz-appearance: textfield;
+	appearance: textfield;
+}
+
+.settings-layout .ping-target-field input,
+.settings-layout .api-key-controls input,
+.settings-layout .num-input input,
+.settings-layout .inline-form input[type='number'],
+.settings-layout .inline-form input[type='time'] {
+	height: 32px;
+	min-height: 32px;
+	max-height: 32px;
+	padding: 0.375rem 0.5rem;
+	max-width: none;
+	color: var(--color-text-primary);
+}
+
+.settings-layout .ping-target-field input,
+.settings-layout .api-key-controls input {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.8rem;
+	font-weight: 400;
+}
+
+.settings-layout .api-key-controls input:read-only {
+	opacity: 0.85;
+	cursor: text;
+}
+
+.settings-layout .num-input input {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.settings-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 1.5rem;
+}
+
+.setting-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.875rem 0;
+	flex-wrap: wrap;
+}
+
+.setting-row > *:first-child {
+	min-width: 0;
+	flex: 1 1 0;
+}
+
+.setting-row .flex.flex-col {
+	min-width: 0;
+}
+
+/* Toggle/control справа — текст слева сжимается, переключатель не уезжает на новую строку */
+.setting-row.toggle-inline-row {
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 0.75rem;
+}
+
+.setting-row.toggle-inline-row > *:first-child {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.setting-row.toggle-inline-row > *:last-child {
+	flex-shrink: 0;
+}
+
+.setting-row:first-child {
+	padding-top: 0;
+}
+
+.setting-row:last-child {
+	padding-bottom: 0;
+}
+
+.setting-row + .setting-row {
+	border-top: 1px solid var(--border);
+}
+
+/* Expanded panel (e.g. DNS subscription refresh) breaks adjacent .setting-row chain */
+.setting-row + .settings-panel {
+	margin-top: 0.875rem;
+}
+
+.settings-panel + .setting-row {
+	margin-top: 0.875rem;
+	border-top: 1px solid var(--border);
+}
+
+/* Highlight wrapper (e.g. deep-link to downloads) breaks adjacent .setting-row chain */
+.setting-row + .settings-highlight-target > .setting-row {
+	border-top: 1px solid var(--border);
+	padding-top: 0.875rem;
+}
+
+.settings-highlight-target + .setting-row {
+	border-top: 1px solid var(--border);
+}
+
+.setting-description {
+	overflow-wrap: break-word;
+	font-size: 0.8125rem;
+	color: var(--text-muted);
+	text-wrap: pretty;
+}
+
+.settings-panel {
+	padding: 1rem;
+	background: var(--color-settings-surface-bg);
+	border-radius: 8px;
+}
+
+.collapse-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.375rem;
+	background: none;
+	border: none;
+	color: var(--text-secondary);
+	cursor: pointer;
+	font-size: 0.875rem;
+	padding: 0.25rem 0;
+	text-align: left;
+}
+
+.collapse-trigger:hover {
+	color: var(--text-primary);
+}
+
+.collapse-trigger svg {
+	width: 14px;
+	height: 14px;
+	transition: transform 0.2s ease;
+	flex-shrink: 0;
+}
+
+.collapse-trigger.open svg {
+	transform: rotate(90deg);
+}
+
+/* ─── Import Modal shared styles ─── */
+
+.import-upload {
+	display: flex;
+	flex-direction: column;
+	gap: 0.875rem;
+}
+
+.import-description {
+	color: var(--text-secondary);
+	font-size: 0.8125rem;
+	margin: 0;
+	line-height: 1.45;
+}
+
+.import-accent {
+	font-weight: 500;
+	color: var(--accent);
+}
+
+.import-upload .drop-zone {
+	display: flex;
+	align-items: center;
+	gap: 1.375rem;
+	width: 100%;
+	min-height: 5.5rem;
+	padding: 1rem 1.125rem;
+	border: 1.5px dashed var(--border);
+	border-radius: 8px;
+	background: var(--bg-primary);
+	cursor: pointer;
+	text-align: left;
+	transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.import-upload .drop-zone:hover,
+.import-upload .drop-zone.dragging {
+	border-color: var(--accent);
+	background: var(--bg-hover, var(--bg-secondary));
+}
+
+.import-upload .drop-icon {
+	flex-shrink: 0;
+	width: 1.5rem;
+	height: 1.5rem;
+	color: var(--accent);
+}
+
+.import-upload .drop-title {
+	margin: 0;
+	font-size: 0.8125rem;
+	font-weight: 500;
+	color: var(--text-primary);
+	line-height: 1.35;
+}
+
+.import-upload .drop-title .drop-hint {
+	display: block;
+	margin-top: 0.1875rem;
+	font-size: 0.6875rem;
+	font-weight: 400;
+	color: var(--text-muted);
+}
+
+.hidden-input {
+	display: none;
+}
+
+.import-error {
+	margin: 0;
+	font-size: 0.8125rem;
+	color: var(--error);
+}
+
+.import-preview {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.import-hint {
+	color: var(--text-secondary);
+	font-size: 0.8125rem;
+	margin: 0;
+}
+
+.import-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.375rem;
+	max-height: min(400px, 50vh);
+	overflow-y: auto;
+}
+
+.import-item {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.5rem 0.625rem;
+	background: var(--bg-primary);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 0.8125rem;
+}
+
+.import-item.duplicate {
+	opacity: 0.65;
+}
+
+.import-item.overridden {
+	border-color: var(--accent);
+}
+
+.import-item input[type='checkbox'] {
+	flex-shrink: 0;
+	margin: 0;
+	accent-color: var(--accent);
+}
+
+.import-item-info {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 0.125rem;
+	min-width: 0;
+}
+
+.import-name {
+	font-weight: 500;
+	color: var(--text-primary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.import-meta {
+	color: var(--text-muted);
+	font-size: 0.75rem;
+}
+
+.import-dup {
+	flex-shrink: 0;
+	font-size: 0.6875rem;
+	color: var(--warning);
+}
+
+.tunnel-default-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.625rem 0.75rem;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+}
+
+.tunnel-default-label {
+	color: var(--text-muted);
+	font-size: 0.75rem;
+	white-space: nowrap;
+}
+
+.tunnel-select {
+	flex: 1;
+	min-width: 0;
+}
+
+.tunnel-select-inline {
+	flex-shrink: 0;
+	min-width: 8rem;
+	max-width: 10rem;
+}
+
+.tunnel-name-btn {
+	flex-shrink: 0;
+	max-width: 9rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	background: none;
+	border: none;
+	padding: 0.125rem 0.375rem;
+	color: var(--text-muted);
+	font-size: 0.6875rem;
+	font-family: inherit;
+	cursor: pointer;
+	border-radius: 4px;
+	white-space: nowrap;
+}
+
+.tunnel-name-btn:hover:not(:disabled) {
+	background: var(--bg-secondary);
+	color: var(--text-secondary);
+}
+
+.tunnel-name-btn.overridden {
+	color: var(--accent);
+}
+
+.tunnel-name-btn:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+	.import-upload .drop-zone {
+		flex-direction: column;
+		text-align: center;
+	}
+
+	.import-item {
+		flex-wrap: wrap;
+	}
+
+	.tunnel-name-btn,
+	.tunnel-select-inline {
+		margin-left: 1.5rem;
+		max-width: none;
+		width: calc(100% - 1.5rem);
+	}
+
+	.tunnel-default-bar {
+		flex-direction: column;
+		align-items: stretch;
+	}
+}
+
+/* ─── Bulk Action Bar ─── */
+
+.bulk-bar {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.bulk-bar-nav {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.bulk-bar-actions {
+	display: flex;
+	gap: 0.375rem;
+	flex-wrap: wrap;
+}
+
+.bulk-btn {
+	padding: 0.5rem 0.875rem;
+	border-radius: 6px;
+	font-size: 0.75rem;
+	font-weight: 500;
+	cursor: pointer;
+	border: 1px solid;
+	background: transparent;
+	transition: opacity 0.15s;
+}
+
+.bulk-btn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.bulk-btn-cancel {
+	border-color: var(--border);
+	color: var(--text-primary);
+}
+
+.bulk-btn-select-all {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.bulk-btn-enable {
+	border-color: var(--success, #22c55e);
+	color: var(--success, #22c55e);
+}
+
+.bulk-btn-disable {
+	border-color: var(--warning, #f59e0b);
+	color: var(--warning, #f59e0b);
+}
+
+.bulk-btn-delete {
+	border: none;
+	background: var(--error, #ef4444);
+	color: #fff;
+}
+
+.bulk-btn-tunnel {
+	border-color: #8b5cf6;
+	color: #8b5cf6;
+}
+
+.bulk-btn-export {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.bulk-count {
+	color: var(--text-primary);
+	font-size: 0.8125rem;
+	font-weight: 500;
+	flex: 1;
+}
+
+.bulk-tunnel-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.375rem;
+	background: rgba(139, 92, 246, 0.06);
+	border: 1px solid rgba(139, 92, 246, 0.25);
+	border-radius: 8px;
+	padding: 0.375rem 0.5rem;
+}
+
+.bulk-tunnel-label {
+	color: #8b5cf6;
+	font-size: 0.75rem;
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.bulk-tunnel-select {
+	flex: 1;
+	border: 1px solid #8b5cf6;
+	color: var(--text-primary);
+	background: var(--bg-secondary);
+	padding: 0.4375rem 0.5rem;
+	border-radius: 5px;
+	font-size: 0.75rem;
+	min-width: 0;
+}
+
+.bulk-tunnel-apply {
+	background: #8b5cf6;
+	color: #fff;
+	padding: 0.4375rem 0.875rem;
+	border-radius: 5px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	border: none;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.bulk-tunnel-close {
+	background: none;
+	border: none;
+	color: var(--text-muted);
+	padding: 0.25rem 0.5rem;
+	font-size: 0.75rem;
+	cursor: pointer;
+}
+
+/* ─── Routing tab shared styles ─── */
+
+.section-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 0.75rem;
+}
+
+.section-summary {
+	color: var(--text-muted);
+	font-size: 0.8125rem;
+}
+
+.section-buttons {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+}
+
+.route-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.empty-hint {
+	text-align: center;
+	color: var(--text-muted);
+	font-size: 0.875rem;
+	padding: 3rem 1rem;
+}
+
+.warn-hint {
+	text-align: center;
+	color: var(--warning);
+	font-size: 0.875rem;
+	padding: 3rem 1rem;
+	background: color-mix(in srgb, var(--warning) 8%, transparent);
+	border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+	border-radius: 8px;
+}
+
+.confirm-text {
+	font-size: 0.875rem;
+	color: var(--text-secondary);
+}
+
+.delete-hint {
+	font-size: 12px;
+	color: var(--text-muted);
+	margin-top: 4px;
+}
+
+@media (max-width: 1024px) {
+	.route-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
+@media (max-width: 768px) {
+	.route-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media (max-width: 640px) {
+	.section-header {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.5rem;
+	}
+
+	.section-buttons {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		width: 100%;
+	}
+
+	.section-buttons > :not([role='status']) {
+		flex: 1 1 calc(50% - 0.25rem);
+		min-width: calc(50% - 0.25rem);
+		max-width: 100%;
+	}
+
+	.section-buttons > [role='status'] {
+		flex: 1 1 100%;
+		min-width: 100%;
+	}
+
+	.section-buttons > .dropdown-wrapper {
+		width: 100%;
+	}
+
+	.section-buttons .btn {
+		width: 100%;
+		min-height: 28px;
+		justify-content: center;
+	}
+
+	.setting-row {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.5rem;
+	}
+	.setting-row > *:first-child {
+		flex: initial;
+	}
+
+	.setting-row.toggle-inline-row {
+		flex-direction: row;
+		align-items: center;
+		flex-wrap: nowrap;
+		gap: 0.75rem;
+	}
+
+	.setting-row.toggle-inline-row > *:first-child {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+}
+
+/* Protocol badges (shared across connections components) */
+.proto-badge {
+	font-size: 0.625rem;
+	padding: 0.125rem 0.375rem;
+	border-radius: 3px;
+	font-weight: 600;
+	font-family: var(--font-mono, monospace);
+}
+
+.proto-tcp { background: rgba(122,162,247,0.15); color: var(--accent); }
+.proto-udp { background: rgba(34,197,94,0.15); color: var(--success, #22c55e); }
+.proto-icmp { background: rgba(245,158,11,0.15); color: var(--warning, #f59e0b); }
+
+/* ─── Tunnel/server card grid (responsive: column shrinks to 100% on narrow viewports) ─── */
+.tunnel-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+	gap: 14px;
+}
+/* Medium grid — AWG «Сетка» (compact); used by sing-box tunnels and subscriptions */
+.tunnel-grid.tunnel-grid--compact {
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+	gap: 12px;
+}
+.tunnel-grid > * {
+	min-width: 0;
+}
+
+/* Skeleton-загрузка (страницы Туннели/Серверы, ConnectionsTable).
+   Библиотечный `placeholder` Skeleton UI не используется: его фон на
+   light-dark()/color-scheme, а тема проекта живёт на data-theme и
+   color-scheme не выставляет. Размеры задаются на месте использования. */
+.skeleton,
+.skeleton-circle {
+	display: block;
+	background: var(--color-border);
+	border-radius: 4px;
+	animation: skeleton-pulse 1.1s ease-in-out infinite;
+}
+.skeleton-circle {
+	border-radius: 50%;
+	aspect-ratio: 1;
+}
+@keyframes skeleton-pulse {
+	0%, 100% { opacity: 0.38; }
+	50% { opacity: 0.72; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.skeleton,
+	.skeleton-circle {
+		animation: none;
+		opacity: 0.5;
+	}
+}
+
+/* Subscription members toolbar — hidden below 760px (see TUNNEL_MOBILE_LAYOUT_MAX_WIDTH_PX) */
+@media (max-width: 760px) {
+	.members-toolbar {
+		display: none !important;
+	}
+}
+
+/*
+ * List tables (AWG / sing-box): track shrink-wraps to the widest grid row.
+ * Fixed --awg-list-min-width alone is not enough — column minmax() sums can exceed it,
+ * which leaves header bg / row borders short while cells scroll underneath.
+ */
+.awg-list-table-track {
+	display: inline-block;
+	min-width: 100%;
+	max-width: none;
+	vertical-align: top;
+	box-sizing: border-box;
+}
+
+.awg-list-table-track > :is(
+	.member-list-meta-row,
+	.member-list-line,
+	.sub-list-group,
+	.sub-active-list-group
+) {
+	min-width: max(100%, max-content);
+	box-sizing: border-box;
+}
+
+.awg-list-table-track > :is(
+	.awg-list-row,
+	.sbx-sub-list-row,
+	.sbx-tunnel-list-row,
+	.sbx-member-list-row
+) {
+	min-width: max(100%, max-content);
+	box-sizing: border-box;
+}
+
+.awg-list-table-track > :is(.sub-list-group, .sub-active-list-group) .sbx-sub-active-row {
+	width: 100%;
+	min-width: 100%;
+	box-sizing: border-box;
+}
+
+/* ─── Bare form-control primitives (for inline grid contexts where the Input/Select
+       components' column-layout doesn't fit). Visual styling matches Input.svelte
+       and Select.svelte — keep them in sync if either one changes. ─── */
+.field-input,
+.field-select,
+.field-textarea {
+	width: 100%;
+	background: var(--color-bg-primary);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	color: var(--color-text-primary);
+	font: inherit;
+	font-size: 13px;
+	padding: 0.4375rem 0.625rem;
+	line-height: 1.4;
+	transition: border-color var(--t-fast) ease;
+}
+
+.field-input::placeholder,
+.field-textarea::placeholder {
+	color: var(--color-text-muted);
+}
+
+.field-input:focus,
+.field-select:focus,
+.field-textarea:focus {
+	outline: none;
+	border-color: var(--color-accent);
+}
+
+.field-input:disabled,
+.field-select:disabled,
+.field-textarea:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.field-input.is-error,
+.field-select.is-error,
+.field-textarea.is-error {
+	border-color: var(--color-error);
+}
+
+.field-input[type="number"] {
+	-moz-appearance: textfield;
+	appearance: textfield;
+}
+.field-input[type="number"]::-webkit-outer-spin-button,
+.field-input[type="number"]::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+.field-select {
+	padding-right: 2rem;
+	appearance: none;
+	-webkit-appearance: none;
+	cursor: pointer;
+	background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23737aa2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+	background-repeat: no-repeat;
+	background-position: right 0.5rem center;
+	background-size: 16px;
+}
+
+.field-textarea {
+	resize: vertical;
+	min-height: 4rem;
+	font-family: var(--font-mono);
+}
+
+/* Compact modifier — used in dense filter rows, inline toolbars, etc. */
+.field-input.compact,
+.field-select.compact {
+	font-size: 0.75rem;
+	padding: 0.3rem 0.5rem;
+}
+.field-select.compact {
+	padding-right: 1.75rem;
+	background-position: right 0.375rem center;
+	background-size: 14px;
+}
+
+.field-hint {
+	font-size: 12px;
+	color: var(--color-text-muted);
+	line-height: 1.5;
+	margin-top: 4px;
+}
+
+.field-hint.is-error {
+	color: var(--color-error);
+}
+
+.field-label {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--color-text-secondary);
+}
+
+/* ─── Chip primitive (filter pills, action pills, level toggles) ─── */
+.chip {
+	display: inline-flex;
+	align-items: center;
+	background: transparent;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-pill);
+	padding: 0.25rem 0.625rem;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--color-text-muted);
+	cursor: pointer;
+	transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+	white-space: nowrap;
+}
+
+.chip:hover:not(:disabled) {
+	color: var(--color-text-primary);
+	border-color: var(--color-border-hover);
+}
+
+.chip:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* Base active state for any .chip without a -level-* / -group-* modifier.
+   Specializations below match this rule's specificity (0,2,0); they win by
+   source order — keep this rule above the .chip-level-* / .chip-group-* blocks. */
+.chip.chip-active {
+	background: var(--color-accent);
+	color: var(--color-accent-contrast, #ffffff);
+	border-color: var(--color-accent);
+}
+
+.chip-level-error.chip-active {
+	background: var(--color-error-tint);
+	color: var(--color-error);
+	border-color: var(--color-error-border);
+}
+.chip-level-warn.chip-active {
+	background: var(--color-warning-tint);
+	color: var(--color-warning);
+	border-color: var(--color-warning-border);
+}
+.chip-level-info.chip-active {
+	background: var(--color-accent-tint);
+	color: var(--color-accent);
+	border-color: var(--color-accent-border);
+}
+.chip-level-full.chip-active {
+	background: var(--color-info-tint);
+	color: var(--color-info);
+	border-color: var(--color-info-border);
+}
+.chip-level-debug.chip-active {
+	background: var(--color-muted-tint);
+	color: var(--color-text-secondary);
+	border-color: var(--color-muted-border);
+}
+
+.chip-group-pill.chip-active {
+	background: var(--color-bg-hover);
+	color: var(--color-text-primary);
+	border-color: var(--color-text-muted);
+}
+
+.chip-group-singbox.chip-active {
+	background: var(--color-info-tint, var(--color-bg-tertiary));
+	color: var(--color-info, var(--color-accent));
+	border-color: var(--color-info, var(--color-accent));
+}
+
+.chip-danger:hover:not(:disabled) {
+	color: var(--color-error);
+	border-color: var(--color-error-border);
+}
+
+/* Subgroup pill — colored badge keyed by family via [data-family]. */
+.subgroup-pill {
+	display: inline-block;
+	padding: 0.0625rem 0.375rem;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1.4;
+	border-radius: var(--radius-pill);
+	font-variant-numeric: tabular-nums;
+	border: 1px solid transparent;
+	/* default for unknown family: muted */
+	color: var(--color-text-muted);
+	background: var(--color-bg-secondary);
+	white-space: nowrap;
+}
+.subgroup-pill[data-family="routing"]         { color: var(--family-routing-fg);         background: var(--family-routing-bg);         border-color: var(--family-routing-bd); }
+.subgroup-pill[data-family="lifecycle"]       { color: var(--family-lifecycle-fg);       background: var(--family-lifecycle-bg);       border-color: var(--family-lifecycle-bd); }
+.subgroup-pill[data-family="network"]         { color: var(--family-network-fg);         background: var(--family-network-bg);         border-color: var(--family-network-bd); }
+.subgroup-pill[data-family="policy"]          { color: var(--family-policy-fg);          background: var(--family-policy-bg);          border-color: var(--family-policy-bd); }
+.subgroup-pill[data-family="system"]          { color: var(--family-system-fg);          background: var(--family-system-bg);          border-color: var(--family-system-bd); }
+.subgroup-pill[data-family="feature"]         { color: var(--family-feature-fg);         background: var(--family-feature-bg);         border-color: var(--family-feature-bd); }
+.subgroup-pill[data-family="singbox-runtime"] { color: var(--family-singbox-runtime-fg); background: var(--family-singbox-runtime-bg); border-color: var(--family-singbox-runtime-bd); }
+
+/* Shared icon-row field (used in DnsRouteEditModal, IpRouteEditModal). */
+.icon-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px;
+	background: var(--bg-primary);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+}
+.icon-meta {
+	flex: 1;
+	min-width: 0;
+}
+.icon-src {
+	font-size: 0.8125rem;
+	color: var(--text-primary);
+}
+.icon-hint {
+	font-size: 0.6875rem;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	margin-top: 2px;
+}
+
+/* Row of buttons under a form/section body (proxy detail sections). */
+.btn-row {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+	margin-top: 0.75rem;
+}
+
+/* Traffic rate labels — same rx/tx colors as TrafficChart sparklines */
+.traffic-rate.rx {
+	color: var(--accent, #60a5fa);
+}
+.traffic-rate.tx {
+	color: var(--success, #4ade80);
+}

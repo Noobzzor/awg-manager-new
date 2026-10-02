@@ -1,0 +1,238 @@
+// Конфиг сервера «Раздачи»: приведение ответа бэкенда к плотному виду, порты
+// инстанса и сохранение. Тот же контракт, что у `exitConfig.ts` детали
+// «Выход»: конфиг страницы — состояние сервера, правки живут в копии детали.
+
+import { api } from '$lib/api/client';
+import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
+import type { NatMode } from '$lib/utils/network';
+import type {
+	FreeTurnConfig,
+	FreeTurnServerConfig,
+	FreeTurnServerInstance,
+	WdttConfig,
+	WdttServerConfig,
+	WdttServerInstance,
+} from '$lib/types';
+import type { ProxyInstanceRow } from './rows';
+
+export type ShareConfig = WdttServerConfig | FreeTurnServerConfig;
+export type ShareInstance = WdttServerInstance | FreeTurnServerInstance;
+
+// ─── Плотный конфиг.
+//
+// Поля с `omitempty` (`internal/wdtt/types.go`, `internal/freeturn/types.go`)
+// бэкенд не сериализует, и пустая строка приезжает как отсутствующий ключ.
+// `bind:value` на `undefined` бросает `props_invalid_value` (Input объявляет
+// значение как `$bindable('')`), поэтому optional-строки заполняются один раз —
+// сразу после ответа бэкенда. Тот же класс блокера, что C-1 задачи 3.
+//
+// Union-поля (`natMode`, `statsLog`, `relayMode`) в списки не входят: '' для
+// них не «пусто», а поломка семантики — у контролов они читаются с дефолтом.
+
+const WDTT_SERVER_OPTIONAL_STRINGS: readonly (keyof WdttServerConfig)[] = [
+	'configDir',
+];
+
+const FT_SERVER_OPTIONAL_STRINGS: readonly (keyof FreeTurnServerConfig)[] = [
+	'obfKey',
+];
+
+function fillStrings<T extends object>(cfg: T, keys: readonly (keyof T)[]): T {
+	for (const key of keys) {
+		if (cfg[key] === undefined) (cfg as Record<string, unknown>)[key as string] = '';
+	}
+	return cfg;
+}
+
+export function normalizeWdttServerConfig(cfg: WdttServerConfig): WdttServerConfig {
+	return fillStrings(cfg, WDTT_SERVER_OPTIONAL_STRINGS);
+}
+
+export function normalizeFreeTurnServerConfig(cfg: FreeTurnServerConfig): FreeTurnServerConfig {
+	return fillStrings(cfg, FT_SERVER_OPTIONAL_STRINGS);
+}
+
+/** Конфиги серверов страницы — на месте, сразу после загрузки. */
+export function normalizeShareConfigs(wdtt: WdttConfig, ft: FreeTurnConfig): void {
+	for (const inst of wdtt.servers) normalizeWdttServerConfig(inst.config);
+	for (const inst of ft.servers) normalizeFreeTurnServerConfig(inst.config);
+}
+
+// ─── Режим NAT (SH-48): подписи одни на секцию и на схему.
+
+export const natModeOptions: { value: NatMode; label: string }[] = [
+	{ value: 'full', label: 'Полный' },
+	{ value: 'internet-only', label: 'Интернет' },
+	{ value: 'none', label: 'Без NAT' },
+];
+
+export function natModeLabel(mode?: string): string {
+	return natModeOptions.find((o) => o.value === (mode || 'full'))?.label ?? '';
+}
+
+// ─── Порты инстанса.
+
+export interface SharePort {
+	listen: string;
+	proto?: 'udp' | 'tcp';
+	/** Подпись порта в мете строки состояния (RB-07). */
+	label: string;
+	port: number;
+}
+
+const DEFAULT_DTLS = 56002;
+
+/**
+ * Порты WDTT-сервера. Raw по умолчанию — DTLS+1, Direct показывается, только
+ * если отличается от DTLS (иначе пиры идут на DTLS-порт).
+ */
+export function wdttServerPorts(cfg: WdttServerConfig): SharePort[] {
+	const dtls = listenPortNumber(cfg.listen ?? '', DEFAULT_DTLS);
+	const rawPort = cfg.rawListen?.trim()
+		? listenPortNumber(cfg.rawListen, dtls + 1)
+		: dtls + 1;
+	const host = (cfg.listen ?? '').split(':')[0] || '0.0.0.0';
+	const rawHost = (cfg.rawListen?.trim() ?? '').split(':')[0] || host;
+	const ports: SharePort[] = [
+		{ listen: setListenPort(cfg.listen || `${host}:${dtls}`, dtls, host), label: 'DTLS', port: dtls },
+		{ listen: setListenPort(`${rawHost}:${rawPort}`, rawPort, rawHost), label: 'Raw', port: rawPort },
+	];
+	const direct = cfg.directListen?.trim();
+	if (direct && listenPortNumber(direct, 0) !== dtls) {
+		const port = listenPortNumber(direct, dtls);
+		// Через setListenPort, как у соседних строк: до нормализации поля
+		// directListen мог быть голым портом, и такой адрес
+		// ListenPortKillButton отправит бэкенду как есть, а
+		// net.SplitHostPort его не разберёт.
+		ports.push({ listen: setListenPort(direct, port, host), label: 'Direct', port });
+	}
+	return ports;
+}
+
+/**
+ * Значение `directListen` по введённому НОМЕРУ порта. Пусто — «выключено»,
+ * `null` — ввод не принят (поле остаётся прежним).
+ *
+ * Хост наследуется от порта раздачи, и это не косметика. Свободный текст в
+ * поле расходился с бэкендом дважды:
+ *   — «56005» без хоста здешний парсер принимал, а `net.SplitHostPort`
+ *     (`validatePorts`, internal/proxyrt/roles/config.go) отвергал; PATCH
+ *     конфига `Validate` не зовёт, поэтому приговор прилетал уже применением
+ *     и останавливал работающий сервер;
+ *   — «выключено» фронт считал по номеру порта, а бэкенд — по равенству
+ *     СТРОК адресов (`config.go`, `args.go`, INPUT-порты роли, ведомость
+ *     занятости), так что «127.0.0.1:56002» при listen «0.0.0.0:56002» для
+ *     фронта было «выключено», для бэкенда — столкновением.
+ * С общим хостом «порт равен порту раздачи» и «строка равна listen» — одно и
+ * то же, а адреса без хоста стали невыразимы.
+ */
+export function directListenValue(listen: string | undefined, value: string): string | null {
+	if (!value.trim()) return '';
+	const port = Number(value);
+	if (!Number.isFinite(port) || port <= 0) return null;
+	return setListenPort(listen || `0.0.0.0:${DEFAULT_DTLS}`, Math.min(65535, Math.trunc(port)), '0.0.0.0');
+}
+
+/**
+ * Внутренний WG-порт сервера (`-wg-port`). В мете строки состояния его нет —
+ * снаружи на него не приходят, — но освобождать его иногда нужно, поэтому в
+ * списке «Освобождение портов» он отдельной строкой.
+ */
+export function wdttServerWgPort(cfg: WdttServerConfig): SharePort {
+	const port = cfg.wgPort || 56001;
+	return { listen: `0.0.0.0:${port}`, label: 'WG', port };
+}
+
+/**
+ * Список секции «Освобождение портов» раздачи WDTT: порты сервера плюс
+ * внутренний WG-порт, без дублей по `listen`. Совпадения реальны: raw по
+ * умолчанию — DTLS+1, и при DTLS :56000 он равен дефолтному WG-порту 56001.
+ * Совпавший порт показывается одной строкой.
+ */
+export function wdttServerKillPorts(cfg: WdttServerConfig): SharePort[] {
+	const out: SharePort[] = [];
+	for (const p of [...wdttServerPorts(cfg), wdttServerWgPort(cfg)]) {
+		if (!out.some((x) => x.listen === p.listen)) out.push(p);
+	}
+	return out;
+}
+
+export function freeTurnServerPorts(cfg: FreeTurnServerConfig): SharePort[] {
+	const port = listenPortNumber(cfg.listen ?? '', 56000);
+	return [
+		{
+			listen: cfg.listen || `0.0.0.0:${port}`,
+			proto: cfg.mode === 'tcp' ? 'tcp' : 'udp',
+			label: '',
+			port,
+		},
+	];
+}
+
+// ─── Сохранение.
+
+/** Инстанс выбранной строки в конфиге своего протокола. */
+export function shareInstance(
+	row: ProxyInstanceRow | null,
+	wdtt: WdttConfig | null,
+	ft: FreeTurnConfig | null,
+): ShareInstance | undefined {
+	if (!row) return undefined;
+	return row.protocol === 'wdtt'
+		? wdtt?.servers.find((s) => s.id === row.id)
+		: ft?.servers.find((s) => s.id === row.id);
+}
+
+/**
+ * Сохранение конфига сервера. Ответ бэкенда ложится в конфиг страницы —
+ * состояние сервера после записи; редактируемая копия детали живёт отдельно.
+ */
+export async function saveShareInstance(
+	row: ProxyInstanceRow,
+	inst: ShareInstance,
+	config: ShareConfig,
+): Promise<ShareConfig> {
+	if (row.protocol === 'wdtt') {
+		const res = await api.updateWdttServerInstance(row.id, config as WdttServerConfig);
+		const saved = normalizeWdttServerConfig(res.config);
+		(inst as WdttServerInstance).config = saved;
+		return saved;
+	}
+	const saved = normalizeFreeTurnServerConfig(
+		await api.updateFreeTurnServerInstance(row.id, config as FreeTurnServerConfig),
+	);
+	(inst as FreeTurnServerInstance).config = saved;
+	return saved;
+}
+
+/**
+ * Столкновение портов сервера — та же проверка, что у бэкенда
+ * (`WdttServerConfig.validatePorts`, internal/proxyrt/roles/config.go).
+ *
+ * Здесь она нужна, чтобы коллизию нельзя было СОЗДАТЬ: бэкенд её отвергнет,
+ * но уже приговором конфига, и человек увидит отказ вместо подсказки. Пустая
+ * строка — конфликта нет.
+ *
+ * Direct, равный порту раздачи, — это «выключено», а не столкновение.
+ */
+export function serverPortConflict(cfg: WdttServerConfig): string {
+	// Пустой listen бэкенд отвергает раньше всех сравнений портов
+	// (`WdttServerConfig.Validate`, internal/proxyrt/roles/config.go), а
+	// здесь он подменяется дефолтом и конфликта не даёт — отказ прилетал
+	// с сервера вместо того, чтобы не дать нажать «Сохранить».
+	if (!(cfg.listen ?? '').trim()) return 'Не задан порт раздачи.';
+	const seen = new Map<number, string>();
+	const add = (name: string, port: number): string => {
+		if (!Number.isInteger(port) || port <= 0) return '';
+		const prev = seen.get(port);
+		if (prev) return `Порт ${port} занят дважды: ${prev} и ${name}. Задайте разные.`;
+		seen.set(port, name);
+		return '';
+	};
+	for (const p of wdttServerPorts(cfg)) {
+		const label = p.label === 'DTLS' ? 'порт раздачи' : `${p.label}-порт`;
+		const err = add(label, p.port);
+		if (err) return err;
+	}
+	return add('внутренний WG-порт', cfg.wgPort ?? 0);
+}

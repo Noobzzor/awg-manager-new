@@ -1,0 +1,9 @@
+{
+  "data": [
+    {"id":"netflix","name":"Netflix","category":"media","iconSlug":"netflix","ruleSets":[{"tag":"geosite-netflix","url":"https://example/geosite-netflix.srs"}],"rules":[{"ruleSetRef":"geosite-netflix","actionTarget":"tunnel"}]},
+    {"id":"spotify","name":"Spotify","category":"media","iconSlug":"spotify","ruleSets":[{"tag":"geosite-spotify","url":"https://example/geosite-spotify.srs"}],"rules":[{"ruleSetRef":"geosite-spotify","actionTarget":"tunnel"}]},
+    {"id":"openai","name":"OpenAI","category":"ai","iconSlug":"openai","ruleSets":[{"tag":"geosite-openai","url":"https://example/geosite-openai.srs"}],"rules":[{"ruleSetRef":"geosite-openai","actionTarget":"tunnel"}]},
+    {"id":"discord","name":"Discord","category":"social","iconSlug":"discord","ruleSets":[{"tag":"geosite-discord","url":"https://example/geosite-discord.srs"}],"rules":[{"ruleSetRef":"geosite-discord","actionTarget":"tunnel"}]},
+    {"id":"github","name":"GitHub","category":"developer","iconSlug":"github","ruleSets":[{"tag":"geosite-github","url":"https://example/geosite-github.srs"}],"rules":[{"ruleSetRef":"geosite-github","actionTarget":"tunnel"}]}
+  ]
+}

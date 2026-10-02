@@ -1,0 +1,940 @@
+package storage
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestSettingsStore_LoadDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Check default values
+	if settings.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("SchemaVersion = %d, want %d", settings.SchemaVersion, CurrentSchemaVersion)
+	}
+	if settings.AuthEnabled {
+		t.Error("AuthEnabled = true, want false")
+	}
+	if settings.Server.Port != DefaultPort {
+		t.Errorf("Server.Port = %d, want %d", settings.Server.Port, DefaultPort)
+	}
+	if settings.Server.Interface != DefaultInterface {
+		t.Errorf("Server.Interface = %s, want %s", settings.Server.Interface, DefaultInterface)
+	}
+	if settings.PingCheck.Enabled {
+		t.Error("PingCheck.Enabled = true, want false")
+	}
+	if settings.PingCheck.Defaults.Method != "http" {
+		t.Errorf("PingCheck.Defaults.Method = %s, want http", settings.PingCheck.Defaults.Method)
+	}
+	if settings.PingCheck.Defaults.Target != DefaultPingCheckTarget {
+		t.Errorf("PingCheck.Defaults.Target = %s, want %s", settings.PingCheck.Defaults.Target, DefaultPingCheckTarget)
+	}
+	if settings.PingCheck.Defaults.FailThreshold != 3 {
+		t.Errorf("PingCheck.Defaults.FailThreshold = %d, want 3", settings.PingCheck.Defaults.FailThreshold)
+	}
+	if settings.ConnectivityCheckURL != DefaultConnectivityCheckURL {
+		t.Errorf("ConnectivityCheckURL = %q, want %q", settings.ConnectivityCheckURL, DefaultConnectivityCheckURL)
+	}
+	if settings.SingboxRouter.DeviceMode != "policy" {
+		t.Errorf("SingboxRouter.DeviceMode = %q, want policy", settings.SingboxRouter.DeviceMode)
+	}
+	if !settings.SingboxRouter.SnifferEnabled {
+		t.Error("SingboxRouter.SnifferEnabled = false, want true")
+	}
+	if len(settings.SingboxRouter.BypassPresets) != 1 || settings.SingboxRouter.BypassPresets[0] != "keendns" {
+		t.Errorf("SingboxRouter.BypassPresets = %v, want [keendns]", settings.SingboxRouter.BypassPresets)
+	}
+	if settings.Download.RouteTag != "direct" {
+		t.Errorf("Download.RouteTag = %q, want direct", settings.Download.RouteTag)
+	}
+}
+
+func TestSettingsStore_MigrateFromV1(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create v1 settings file (without pingCheck and server)
+	v1Settings := map[string]interface{}{
+		"schemaVersion": 1,
+		"authEnabled":   false,
+	}
+	data, _ := json.Marshal(v1Settings)
+	os.WriteFile(filepath.Join(tmpDir, "settings.json"), data, 0644)
+
+	store := NewSettingsStore(tmpDir)
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Should be migrated to v2
+	if settings.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("SchemaVersion = %d, want %d", settings.SchemaVersion, CurrentSchemaVersion)
+	}
+
+	// Original value should be preserved
+	if settings.AuthEnabled {
+		t.Error("AuthEnabled = true, want false (preserved from v1)")
+	}
+
+	// New fields should have defaults
+	if settings.Server.Port != DefaultPort {
+		t.Errorf("Server.Port = %d, want %d", settings.Server.Port, DefaultPort)
+	}
+	if settings.PingCheck.Defaults.Method != "http" {
+		t.Errorf("PingCheck.Defaults.Method = %s, want http", settings.PingCheck.Defaults.Method)
+	}
+	if settings.SingboxRouter.DeviceMode != "policy" {
+		t.Errorf("SingboxRouter.DeviceMode = %q, want policy", settings.SingboxRouter.DeviceMode)
+	}
+	if !settings.SingboxRouter.SnifferEnabled {
+		t.Error("SingboxRouter.SnifferEnabled = false, want true")
+	}
+}
+
+func TestSettingsStore_MigratePortFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create old port file
+	os.WriteFile(filepath.Join(tmpDir, "port"), []byte("8888"), 0644)
+
+	store := NewSettingsStore(tmpDir)
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Port should be read from port file
+	if settings.Server.Port != 8888 {
+		t.Errorf("Server.Port = %d, want 8888 (from port file)", settings.Server.Port)
+	}
+
+	// Port file should be removed
+	if _, err := os.Stat(filepath.Join(tmpDir, "port")); !os.IsNotExist(err) {
+		t.Error("Port file should be removed after migration")
+	}
+}
+
+func TestSettingsStore_SaveAndLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+
+	// Load defaults
+	settings, _ := store.Load()
+
+	// Modify and save
+	settings.PingCheck.Enabled = true
+	settings.PingCheck.Defaults.Interval = 60
+	settings.Server.Port = 3333
+
+	if err := store.save(settings); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	// Create new store and load
+	store2 := NewSettingsStore(tmpDir)
+	loaded, err := store2.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Check values persisted
+	if !loaded.PingCheck.Enabled {
+		t.Error("PingCheck.Enabled = false, want true")
+	}
+	if loaded.PingCheck.Defaults.Interval != 60 {
+		t.Errorf("PingCheck.Defaults.Interval = %d, want 60", loaded.PingCheck.Defaults.Interval)
+	}
+	if loaded.Server.Port != 3333 {
+		t.Errorf("Server.Port = %d, want 3333", loaded.Server.Port)
+	}
+}
+
+func TestSettingsStore_DisableMemorySaving(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+
+	// Load defaults
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Default should be false (auto mode)
+	if settings.DisableMemorySaving {
+		t.Error("DisableMemorySaving = true, want false (default)")
+	}
+
+	// Toggle and save
+	settings.DisableMemorySaving = true
+	if err := store.save(settings); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	// Reload and verify
+	store2 := NewSettingsStore(tmpDir)
+	loaded, err := store2.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !loaded.DisableMemorySaving {
+		t.Error("DisableMemorySaving = false, want true (saved)")
+	}
+
+	// Test helper method
+	if !store2.IsMemorySavingDisabled() {
+		t.Error("IsMemorySavingDisabled() = false, want true")
+	}
+}
+
+func TestSettingsStore_BackwardCompatibility(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Simulate old settings file without disableMemorySaving field
+	oldSettings := `{
+		"schemaVersion": 2,
+		"authEnabled": true,
+		"server": {"port": 2222, "interface": "br0"},
+		"pingCheck": {"enabled": false, "defaults": {"method": "http", "target": "8.8.8.8", "interval": 45, "deadInterval": 120, "failThreshold": 3}}
+	}`
+	os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(oldSettings), 0644)
+
+	store := NewSettingsStore(tmpDir)
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// DisableMemorySaving should default to false when missing
+	if settings.DisableMemorySaving {
+		t.Error("DisableMemorySaving should be false for old settings files")
+	}
+}
+
+func TestSettings_MigrateLegacyManagedServer(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "settings.json")
+	// Seed with legacy singular shape.
+	legacy := `{
+        "schemaVersion": 13,
+        "managedServer": {"interfaceName":"Wireguard4","address":"10.66.66.1","mask":"255.255.255.0","listenPort":51820,"policy":"none","peers":[]}
+    }`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	servers := store.GetManagedServers()
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 migrated server, got %d", len(servers))
+	}
+	if servers[0].InterfaceName != "Wireguard4" {
+		t.Errorf("interface mismatch: %s", servers[0].InterfaceName)
+	}
+
+	// Force a save and re-read raw bytes — legacy field must be gone.
+	if err := store.SaveManagedServers(servers); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), `"managedServer":`) {
+		t.Errorf("legacy field not cleared:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"managedServers":`) {
+		t.Errorf("new field not written")
+	}
+}
+
+func TestSettingsStore_LoadDedupesManagedServers(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "settings.json")
+	// settings.json with three duplicate Wireguard4 entries (reproduces
+	// the on-disk state observed on a real user's router).
+	corrupt := `{
+        "schemaVersion": 17,
+        "managedServers": [
+            {"interfaceName":"Wireguard4","address":"10.0.0.1","mask":"255.255.255.0","listenPort":51820,"policy":"none","peers":[]},
+            {"interfaceName":"Wireguard4","address":"10.0.0.1","mask":"255.255.255.0","listenPort":51820,"policy":"none","peers":[]},
+            {"interfaceName":"Wireguard4","address":"10.0.0.1","mask":"255.255.255.0","listenPort":51820,"policy":"none","peers":[]}
+        ]
+    }`
+	if err := os.WriteFile(path, []byte(corrupt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	servers := store.GetManagedServers()
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 deduped server, got %d", len(servers))
+	}
+	if servers[0].InterfaceName != "Wireguard4" {
+		t.Errorf("interface mismatch: %s", servers[0].InterfaceName)
+	}
+
+	// File on disk MUST be rewritten — open it raw and count.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed Settings
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	if len(parsed.ManagedServers) != 1 {
+		t.Errorf("expected disk to have 1 managed server after Load, got %d", len(parsed.ManagedServers))
+	}
+}
+
+func TestSettings_MigrateV23toV24_KeepsLegacyNonDirectRouteKindEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "settings.json")
+	legacy := `{"schemaVersion":23,"authEnabled":false,"usageLevel":"basic","download":{"routeTag":"sample-route","routeKind":""}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if s.Download.RouteTag != "sample-route" {
+		t.Fatalf("download.routeTag = %q, want sample-route", s.Download.RouteTag)
+	}
+	if s.Download.RouteKind != "" {
+		t.Fatalf("download.routeKind = %q, want empty", s.Download.RouteKind)
+	}
+}
+
+func TestSettings_MigrateV24toV25_SetsPingTargets(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":24,"authEnabled":false,"usageLevel":"basic","pingCheck":{"defaults":{"target":"  "}}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if s.PingCheck.Defaults.Target != DefaultPingCheckTarget {
+		t.Fatalf("ping target = %q, want %q", s.PingCheck.Defaults.Target, DefaultPingCheckTarget)
+	}
+	if s.ConnectivityCheckURL != DefaultConnectivityCheckURL {
+		t.Fatalf("connectivity URL = %q, want %q", s.ConnectivityCheckURL, DefaultConnectivityCheckURL)
+	}
+}
+
+func TestSettingsStore_GetManagedServersDedupes(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// SaveManagedServers is the only API that lets the slice contain
+	// dups (Add rejects). Used here to simulate a corrupted slice
+	// reaching the read path without going through Load.
+	dup := ManagedServer{InterfaceName: "Wireguard5", Address: "10.0.0.1", Mask: "255.255.255.0", ListenPort: 51820, Policy: "none"}
+	if err := store.SaveManagedServers([]ManagedServer{dup, dup, dup}); err != nil {
+		t.Fatal(err)
+	}
+	out := store.GetManagedServers()
+	if len(out) != 1 {
+		t.Errorf("expected GetManagedServers to dedupe, got %d entries", len(out))
+	}
+}
+
+func TestSettingsMigrationV8_SchemaVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+
+	v7 := `{"schemaVersion":7,"authEnabled":false,"server":{"port":2222,"interface":"br0"},"pingCheck":{},"logging":{},"backendMode":"auto","bootDelaySeconds":0,"updates":{}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(v7), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if settings.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("SchemaVersion = %d, want %d", settings.SchemaVersion, CurrentSchemaVersion)
+	}
+}
+
+func TestLoadFreshInstallSetsBasic(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if settings.UsageLevel != UsageLevelBasic {
+		t.Errorf("fresh install UsageLevel = %q, want %q", settings.UsageLevel, UsageLevelBasic)
+	}
+	if settings.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("fresh install SchemaVersion = %d, want %d", settings.SchemaVersion, CurrentSchemaVersion)
+	}
+
+	// Verify the value was persisted on disk too.
+	data, err := os.ReadFile(filepath.Join(tmpDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	if !strings.Contains(string(data), `"usageLevel": "basic"`) {
+		t.Errorf("settings.json missing basic usageLevel:\n%s", data)
+	}
+}
+
+func TestLoadUpgradeFromV15SetsAdvanced(t *testing.T) {
+	tmpDir := t.TempDir()
+	v15 := `{
+		"schemaVersion": 15,
+		"authEnabled": false,
+		"onboardingCompleted": true,
+		"server": {"port": 2222, "interface": "br0"},
+		"pingCheck": {"enabled": false, "defaults": {"method":"http","target":"8.8.8.8","interval":45,"deadInterval":120,"failThreshold":3}},
+		"logging": {"enabled": true, "maxAge": 2},
+		"disableMemorySaving": false,
+		"updates": {"checkEnabled": true},
+		"dnsRoute": {"autoRefreshEnabled": false, "refreshIntervalHours": 0},
+		"singboxRouter": {"enabled": false, "policyName": ""}
+	}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(v15), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	store := NewSettingsStore(tmpDir)
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if settings.UsageLevel != UsageLevelAdvanced {
+		t.Errorf("upgrade UsageLevel = %q, want %q", settings.UsageLevel, UsageLevelAdvanced)
+	}
+	if settings.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("upgrade SchemaVersion = %d, want %d", settings.SchemaVersion, CurrentSchemaVersion)
+	}
+
+	// Verify legacy field was dropped from the persisted file.
+	data, _ := os.ReadFile(filepath.Join(tmpDir, "settings.json"))
+	if strings.Contains(string(data), "onboardingCompleted") {
+		t.Errorf("legacy onboardingCompleted field still present:\n%s", data)
+	}
+}
+
+func TestSettings_CreateNDMSProxyForSingbox_DefaultTrue(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !s.CreateNDMSProxyForSingbox {
+		t.Errorf("CreateNDMSProxyForSingbox default = %v, want true (back-compat)", s.CreateNDMSProxyForSingbox)
+	}
+}
+
+func TestSettings_MigrateV19toV20_SetsTrueOnExistingInstall(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Write a v19 settings file without the new field.
+	legacy := `{"schemaVersion":19,"authEnabled":false,"usageLevel":"basic"}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if !s.CreateNDMSProxyForSingbox {
+		t.Errorf("migration should set CreateNDMSProxyForSingbox=true for existing installs (back-compat)")
+	}
+}
+
+func TestSettings_MigrateV20toV21_SetsSingboxLogLevel(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":20,"authEnabled":false,"usageLevel":"basic","logging":{"enabled":true,"maxAge":2,"logLevel":"info"}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if s.Logging.SingboxLogLevel != DefaultSingboxLogLevel {
+		t.Fatalf("singboxLogLevel = %q, want %q", s.Logging.SingboxLogLevel, DefaultSingboxLogLevel)
+	}
+}
+
+func TestSettings_MigrateV21toV22_SetsDownloadRouteTag(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":21,"authEnabled":false,"usageLevel":"basic","download":{"routeTag":""}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if s.Download.RouteTag != "direct" {
+		t.Fatalf("download.routeTag = %q, want direct", s.Download.RouteTag)
+	}
+}
+
+func TestSettings_MigrateV23toV24_NormalizesDownloadRouteKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":23,"authEnabled":false,"usageLevel":"basic","download":{"routeTag":"  ","routeKind":""}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if s.Download.RouteTag != "direct" {
+		t.Fatalf("download.routeTag = %q, want direct", s.Download.RouteTag)
+	}
+	if s.Download.RouteKind != "direct" {
+		t.Fatalf("download.routeKind = %q, want direct", s.Download.RouteKind)
+	}
+}
+
+func TestSettingsStore_GetSingboxLogLevel_Normalized(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	s.Logging.SingboxLogLevel = " WARN "
+	if err := store.save(s); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if got := store.GetSingboxLogLevel(); got != "warn" {
+		t.Fatalf("GetSingboxLogLevel() = %q, want warn", got)
+	}
+
+	s.Logging.SingboxLogLevel = "verbose"
+	if err := store.save(s); err != nil {
+		t.Fatalf("save invalid: %v", err)
+	}
+	if got := store.GetSingboxLogLevel(); got != DefaultSingboxLogLevel {
+		t.Fatalf("GetSingboxLogLevel() invalid fallback = %q, want %q", got, DefaultSingboxLogLevel)
+	}
+}
+
+func TestNormalizeUsageLevel(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"basic", "basic"},
+		{"advanced", "advanced"},
+		{"expert", "expert"},
+		{"", "advanced"},
+		{"garbage", "advanced"},
+		{"BASIC", "advanced"}, // case-sensitive
+	}
+	for _, tc := range tests {
+		got := NormalizeUsageLevel(tc.in)
+		if got != tc.want {
+			t.Errorf("NormalizeUsageLevel(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestDefaultSettingsChannelIsStable(t *testing.T) {
+	s := (&SettingsStore{}).defaultSettings()
+	if s.Updates.Channel != "stable" {
+		t.Errorf("default Updates.Channel = %q, want \"stable\"", s.Updates.Channel)
+	}
+}
+
+func TestMigrateToV23SetsStableChannel(t *testing.T) {
+	var s Settings
+	s.SchemaVersion = 22
+	(&SettingsStore{}).migrateToV23(&s)
+	if s.Updates.Channel != "stable" {
+		t.Errorf("after migrateToV23 Channel = %q, want \"stable\"", s.Updates.Channel)
+	}
+	if s.SchemaVersion != 23 {
+		t.Errorf("SchemaVersion = %d, want 23", s.SchemaVersion)
+	}
+}
+
+func TestMigrateToV28RemapsTraceToInfo(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"trace", "info"}, // v21-stamped default, not a user choice
+		{"debug", "debug"},
+		{"warn", "warn"},
+		{"info", "info"},
+		{"", ""}, // left for downstream defaulting
+	}
+	for _, tc := range cases {
+		var s Settings
+		s.SchemaVersion = 27
+		s.Logging.SingboxLogLevel = tc.in
+		(&SettingsStore{}).migrateToV28(&s)
+		if s.Logging.SingboxLogLevel != tc.want {
+			t.Errorf("migrateToV28(%q) SingboxLogLevel = %q, want %q", tc.in, s.Logging.SingboxLogLevel, tc.want)
+		}
+		if s.SchemaVersion != 28 {
+			t.Errorf("SchemaVersion = %d, want 28", s.SchemaVersion)
+		}
+	}
+}
+
+func TestSettingsStore_SetSingboxCreateNDMSProxy_PersistsAtomic(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := store.SetSingboxCreateNDMSProxy(false); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	// Re-open from disk to confirm persistence.
+	fresh := NewSettingsStore(tmpDir)
+	s, err := fresh.Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if s.CreateNDMSProxyForSingbox {
+		t.Errorf("persisted = %v, want false", s.CreateNDMSProxyForSingbox)
+	}
+	// Toggle back.
+	if err := fresh.SetSingboxCreateNDMSProxy(true); err != nil {
+		t.Fatalf("set back: %v", err)
+	}
+	if !fresh.IsSingboxNDMSProxyEnabled() {
+		t.Errorf("getter sees = false after set true")
+	}
+}
+
+// TestSetOpkgTunState_PersistsAndClears — единая запись владения OpkgTun:
+// персист, перечитывание свежим стором, очистка nil'ом, ошибка на незагруженном.
+func TestSetOpkgTunState_PersistsAndClears(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	want := &OpkgTunState{
+		Mode: OpkgTunModePolicyTun, Provisioned: false, Index: 3,
+		PolicyTun: &OpkgTunPolicyData{NATSegments: []PolicyTunNATSegment{{Name: "Guest", PriorMode: "dynamic"}}},
+	}
+	if err := store.SetOpkgTunState(want); err != nil {
+		t.Fatal(err)
+	}
+	fresh := NewSettingsStore(dir)
+	s, err := fresh.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.OpkgTun == nil || s.OpkgTun.Mode != OpkgTunModePolicyTun || s.OpkgTun.Index != 3 ||
+		s.OpkgTun.Provisioned || s.OpkgTun.PolicyTun == nil || len(s.OpkgTun.PolicyTun.NATSegments) != 1 {
+		t.Fatalf("persisted = %+v", s.OpkgTun)
+	}
+	if err := fresh.SetOpkgTunState(nil); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := NewSettingsStore(dir).Load()
+	if c.OpkgTun != nil {
+		t.Fatalf("OpkgTun = %+v after clear, want nil", c.OpkgTun)
+	}
+	if err := (&SettingsStore{}).SetOpkgTunState(want); err == nil {
+		t.Error("unloaded store: want error")
+	}
+}
+
+// TestSetOpkgTunNATSegments_PayloadOnly — payload-сеттер не трогает ownership
+// (Mode/Provisioned/Index), nil/пустой снимает payload, без записи — ошибка.
+func TestSetOpkgTunNATSegments_PayloadOnly(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOpkgTunNATSegments([]PolicyTunNATSegment{{Name: "Guest", PriorMode: "none"}}); err == nil {
+		t.Fatal("no ownership record: want error")
+	}
+	if err := store.SetOpkgTunState(&OpkgTunState{Mode: OpkgTunModePolicyTun, Provisioned: true, Index: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOpkgTunNATSegments([]PolicyTunNATSegment{{Name: "Guest", PriorMode: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := NewSettingsStore(dir).Load()
+	if s.OpkgTun == nil || !s.OpkgTun.Provisioned || s.OpkgTun.Index != 2 ||
+		s.OpkgTun.Mode != OpkgTunModePolicyTun {
+		t.Fatalf("ownership clobbered: %+v", s.OpkgTun)
+	}
+	if s.OpkgTun.PolicyTun == nil || len(s.OpkgTun.PolicyTun.NATSegments) != 1 {
+		t.Fatalf("payload = %+v", s.OpkgTun.PolicyTun)
+	}
+	if err := store.SetOpkgTunNATSegments(nil); err != nil {
+		t.Fatal(err)
+	}
+	s2, _ := NewSettingsStore(dir).Load()
+	if s2.OpkgTun.PolicyTun != nil {
+		t.Fatalf("payload not cleared: %+v", s2.OpkgTun.PolicyTun)
+	}
+}
+
+func TestMigrateToV26_NATEnabledToMode(t *testing.T) {
+	st := &Settings{SchemaVersion: 25, ManagedServers: []ManagedServer{
+		{InterfaceName: "Wireguard3", NATEnabled: true},
+		{InterfaceName: "Wireguard4", NATEnabled: false},
+	}}
+	migrateNATModes(st)
+	if st.ManagedServers[0].NATMode != "full" {
+		t.Fatalf("NATEnabled=true → full, got %q", st.ManagedServers[0].NATMode)
+	}
+	if st.ManagedServers[1].NATMode != "none" {
+		t.Fatalf("NATEnabled=false → none, got %q", st.ManagedServers[1].NATMode)
+	}
+}
+
+// TestMigrateToV26_PreservesExistingMode: the NATEnabled→mode backfill must
+// skip servers that already carry an explicit NATMode (e.g. internet-only,
+// which has no NATEnabled equivalent), so re-running it is a no-op for them.
+// Exercises the `if NATMode == ""` guard in migrateNATModes directly.
+func TestMigrateToV26_PreservesExistingMode(t *testing.T) {
+	st := &Settings{SchemaVersion: 25, ManagedServers: []ManagedServer{
+		{InterfaceName: "Wireguard3", NATEnabled: false, NATMode: "internet-only"},
+		{InterfaceName: "Wireguard4", NATEnabled: true, NATMode: "none"},
+	}}
+	migrateNATModes(st)
+	if st.ManagedServers[0].NATMode != "internet-only" {
+		t.Errorf("existing internet-only must be preserved, got %q", st.ManagedServers[0].NATMode)
+	}
+	if st.ManagedServers[1].NATMode != "none" {
+		t.Errorf("existing mode must not be re-derived from NATEnabled, got %q", st.ManagedServers[1].NATMode)
+	}
+}
+
+func TestMigrateToV27_SetsRoutingModeTproxy(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":26,"authEnabled":false,"usageLevel":"basic","singboxRouter":{"enabled":true,"deviceMode":"policy"}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if s.SingboxRouter.RoutingMode != "tproxy" {
+		t.Fatalf("routingMode = %q, want tproxy", s.SingboxRouter.RoutingMode)
+	}
+}
+
+// TestMigrateToV27_PreservesExistingMode: the RoutingMode default backfill must
+// skip a config that already carries an explicit mode (e.g. fakeip-tun), so
+// re-running it is a no-op. Exercises the `if RoutingMode == ""` guard.
+func TestMigrateToV27_PreservesExistingMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":26,"authEnabled":false,"usageLevel":"basic","singboxRouter":{"enabled":true,"deviceMode":"policy","routingMode":"fakeip-tun"}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if s.SingboxRouter.RoutingMode != "fakeip-tun" {
+		t.Fatalf("existing routingMode must be preserved, got %q", s.SingboxRouter.RoutingMode)
+	}
+}
+
+// Аксессор, через который настройка доезжает до оператора sing-box: если он
+// начнёт врать пустой строкой, адрес bootstrap молча перестанет применяться.
+func TestSettingsStore_GetSingboxBootstrapDNS(t *testing.T) {
+	tmp := t.TempDir()
+	store := NewSettingsStore(tmp)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := store.GetSingboxBootstrapDNS(); got != "" {
+		t.Errorf("по умолчанию = %q, want пусто", got)
+	}
+
+	settings, err := store.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	settings.SingboxBootstrapDNS = "8.8.8.8"
+	if err := store.save(settings); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := store.GetSingboxBootstrapDNS(); got != "8.8.8.8" {
+		t.Errorf("GetSingboxBootstrapDNS = %q, want 8.8.8.8", got)
+	}
+}
+
+// TestSetOpkgTunState_CopyOnWrite — стор публикует КОПИЮ записи владения, а не
+// указатель вызывающего: мутация объекта после вызова не должна доезжать до
+// кэша (его параллельно маршалят читатели без нашего лока).
+func TestSetOpkgTunState_CopyOnWrite(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	st := &OpkgTunState{Mode: OpkgTunModePolicyTun, Index: 1}
+	if err := store.SetOpkgTunState(st); err != nil {
+		t.Fatal(err)
+	}
+	st.Index = 99
+	st.Provisioned = true
+
+	got, err := store.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OpkgTun == nil || got.OpkgTun.Index != 1 || got.OpkgTun.Provisioned {
+		t.Fatalf("cache = %+v, want Index=1 Provisioned=false (мутация вызывающего доехала до кэша)", got.OpkgTun)
+	}
+}
+
+// API-ключ читается тем же полем, которым записан: разъезд Get/Set здесь —
+// это молча неработающая авторизация по ключу (запрос падает в проверку
+// сессии, будто ключа нет вовсе).
+func TestSettingsStore_ApiKeyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := store.SetApiKey("k-77"); err != nil {
+		t.Fatalf("SetApiKey: %v", err)
+	}
+	if got := store.GetApiKey(); got != "k-77" {
+		t.Fatalf("GetApiKey = %q, want %q", got, "k-77")
+	}
+	// Ленивый Load: свежий стор над тем же каталогом читает ключ с диска.
+	if got := NewSettingsStore(dir).GetApiKey(); got != "k-77" {
+		t.Fatalf("GetApiKey свежего стора = %q, want %q", got, "k-77")
+	}
+	// Пустой каталог — пустой ключ, а не паника на незагруженном сторе.
+	if got := NewSettingsStore(t.TempDir()).GetApiKey(); got != "" {
+		t.Fatalf("GetApiKey без настроек = %q, want пусто", got)
+	}
+}
+
+// Действующий адрес зеркала Amnezia: на свежей установке правило отдаёт
+// непустой дефолт, хотя в самих настройках поле пустое (дефолт в файле
+// перестал бы ротироваться с релизом); после записи своего адреса — свой.
+func TestEffectiveAmneziaMirrorURL(t *testing.T) {
+	store := NewSettingsStore(t.TempDir())
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if settings.AmneziaPremiumMirrorURL != "" {
+		t.Fatalf("свежая установка несёт адрес зеркала: %q", settings.AmneziaPremiumMirrorURL)
+	}
+	if got := EffectiveAmneziaMirrorURL(settings.AmneziaPremiumMirrorURL); got != DefaultAmneziaMirrorURL {
+		t.Fatalf("действующий адрес = %q, want %q", got, DefaultAmneziaMirrorURL)
+	}
+
+	// Домен из зарезервированного .test (RFC 2606) — репозиторий публичный.
+	const custom = "https://mirror.test/cp?m-path=/ru"
+	if err := store.Update(func(cur *Settings) error {
+		cur.AmneziaPremiumMirrorURL = custom
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	snap, err := store.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if got := EffectiveAmneziaMirrorURL(snap.AmneziaPremiumMirrorURL); got != custom {
+		t.Fatalf("действующий адрес = %q, want %q", got, custom)
+	}
+}
+
+// Непригодное хранимое значение считается отсутствующим: действующим
+// адресом становится дефолт.
+//
+// Значение из одних пробелов — то же «пусто», записанное неаккуратно.
+// Испорченный адрес (downgrade, ручная правка) нельзя ни отдать клиенту CP,
+// ни эхо-ить в ответ настроек: страница шлёт тело ответа целиком, и мусор
+// вернулся бы PATCH-ем, получая 400 на каждое сохранение.
+func TestEffectiveAmneziaMirrorURL_UnusableStoredMeansDefault(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored string
+		want   string
+	}{
+		{"одни пробелы", "   ", DefaultAmneziaMirrorURL},
+		{"не адрес вовсе", "не адрес вовсе", DefaultAmneziaMirrorURL},
+		{"не https", "http://mirror.test/cp", DefaultAmneziaMirrorURL},
+		{"с user:pass@", "https://u-test:p-test@mirror.test/cp", DefaultAmneziaMirrorURL},
+		// Годный адрес пробелы по краям не портят — их срезает то же
+		// правило, что делает «одни пробелы» пустым значением.
+		{"годный адрес в пробелах", "  https://mirror.test/cp  ", "https://mirror.test/cp"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EffectiveAmneziaMirrorURL(tc.stored); got != tc.want {
+				t.Fatalf("действующий адрес = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

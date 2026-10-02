@@ -1,0 +1,1726 @@
+package orchestrator
+
+import (
+	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
+)
+
+func TestDecide_Boot_StartsEnabledKernelTunnels(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Enabled: true}
+	s.tunnels["awg1"] = &tunnelState{ID: "awg1", Backend: "kernel", Enabled: true}
+	s.tunnels["awg2"] = &tunnelState{ID: "awg2", Backend: "kernel", Enabled: false}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	starts := filterActions(actions, ActionColdStartKernel)
+	if len(starts) != 2 {
+		t.Errorf("expected 2 ColdStartKernel, got %d", len(starts))
+	}
+	assertNoActionForTunnel(t, actions, "awg2", ActionColdStartKernel)
+}
+
+func TestDecide_Boot_ReconcilesNativeWGWithoutASC(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: true, NWGIndex: 0}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	if n := len(filterActions(actions, ActionReconcileNativeWG)); n != 1 {
+		t.Errorf("expected 1 ReconcileNativeWG for non-ASC nativewg, got %d", n)
+	}
+	if n := len(filterActions(actions, ActionStopNativeWG)); n != 0 {
+		t.Errorf("boot must NOT Stop a nativewg tunnel (Stop+Start churns NDMS edges → race), got %d stops", n)
+	}
+}
+
+func TestDecide_Boot_SkipsNativeWGWithASC(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: true, NWGIndex: 0}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 0 {
+		t.Errorf("NativeWG with ASC should not be started by us, got %d starts", len(starts))
+	}
+}
+
+// ASC + v6-endpoint: после ребута роутера NDMS поднимает интерфейс из своего
+// конфига с заглушкой 127.0.0.1:1 — реальный endpoint жил только в ядре.
+// Boot обязан сделать полный Start (wg set + регистрация endpoint-стража).
+// Связка stored→state: EndpointMayV6 обязан вычисляться из endpoint'а
+// хранилища так, чтобы boot чинил и hostname, и v6-формы (включая
+// IPv4-mapped), но не трогал v4-литералы. Пиннит выбор
+// nwg.EndpointMayResolveIPv6 (а не EndpointHostIsIPv6) в state.go.
+func TestTunnelStateFromStored_EndpointMayV6(t *testing.T) {
+	cases := map[string]bool{
+		"vpn.example.com:51820":  true,
+		"[2a02::1]:51820":        true,
+		"[::ffff:1.2.3.4]:51820": true,
+		"1.2.3.4:51820":          false,
+	}
+	for ep, want := range cases {
+		st := tunnelStateFromStored(&storage.AWGTunnel{
+			ID:      "awg20",
+			Backend: "nativewg",
+			Peer:    storage.AWGPeer{Endpoint: ep},
+		})
+		if st.EndpointMayV6 != want {
+			t.Errorf("EndpointMayV6 for %q = %v, want %v", ep, st.EndpointMayV6, want)
+		}
+	}
+}
+
+func TestDecide_Boot_StartsNativeWGWithASCAndV6Endpoint(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: true, NWGIndex: 0, EndpointMayV6: true}
+	s.tunnels["awg1"] = &tunnelState{ID: "awg1", Backend: "nativewg", Enabled: false, NWGIndex: 1, EndpointMayV6: true}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 1 {
+		t.Fatalf("expected 1 StartNativeWG for enabled ASC+v6 tunnel, got %d", len(starts))
+	}
+	if starts[0].Tunnel != "awg0" {
+		t.Errorf("StartNativeWG for wrong tunnel: %q", starts[0].Tunnel)
+	}
+	assertNoActionForTunnel(t, actions, "awg1", ActionStartNativeWG)
+}
+
+func TestDecide_Boot_IncludesMonitoring(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Enabled: true,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	monitors := filterActions(actions, ActionStartMonitoring)
+	if len(monitors) != 1 {
+		t.Errorf("expected 1 StartMonitoring, got %d", len(monitors))
+	}
+}
+
+func TestDecide_Boot_IncludesRouting(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Enabled: true}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	if !hasAction(actions, ActionReconcileStaticRoutes) {
+		t.Error("expected ActionReconcileStaticRoutes")
+	}
+	if !hasAction(actions, ActionReconcileDNSRoutes) {
+		t.Error("expected ActionReconcileDNSRoutes")
+	}
+}
+
+func TestDecide_Boot_NativeWGConfiguresPingCheck(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, NWGIndex: 0,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	if !hasAction(actions, ActionConfigurePingCheck) {
+		t.Error("NativeWG boot should configure NDMS ping-check profile")
+	}
+}
+
+func TestDecide_Boot_SkipsDisabledTunnels(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Enabled: false}
+	s.tunnels["awg1"] = &tunnelState{ID: "awg1", Backend: "nativewg", Enabled: false, NWGIndex: 0}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	starts := filterActions(actions, ActionColdStartKernel)
+	nwgStarts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 0 || len(nwgStarts) != 0 {
+		t.Errorf("disabled tunnels should not be started")
+	}
+}
+
+func TestDecide_Reconnect_StartsMonitoringOnce(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	monitors := filterActions(actions, ActionStartMonitoring)
+	if len(monitors) != 1 {
+		t.Errorf("expected exactly 1 StartMonitoring, got %d — DUPLICATE BUG!", len(monitors))
+	}
+}
+
+func TestDecide_Reconnect_ResyncsRunningNativeWGWithoutASC(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	restores := filterActions(actions, ActionRestoreKmod)
+	if len(restores) != 1 {
+		t.Errorf("running NativeWG without ASC should restore kmod proxy, got %d restores", len(restores))
+	}
+	stops := filterActions(actions, ActionStopNativeWG)
+	if len(stops) != 0 {
+		t.Errorf("reconnect resync must not drop NDMS to disabled, got %d stops", len(stops))
+	}
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 0 {
+		t.Errorf("running NativeWG without ASC must not full-start on reconnect, got %d starts", len(starts))
+	}
+}
+
+func TestDecide_Reconnect_NonASCResync_StartsMonitoringOnce(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0, Monitoring: true,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	stopMon := filterActions(actions, ActionStopMonitoring)
+	if len(stopMon) != 0 {
+		t.Errorf("reconnect resync should not stop monitoring first, got %d StopMonitoring", len(stopMon))
+	}
+	startMon := filterActions(actions, ActionStartMonitoring)
+	if len(startMon) != 1 {
+		t.Errorf("expected exactly 1 StartMonitoring during non-ASC resync, got %d", len(startMon))
+	}
+}
+
+func TestDecide_Reconnect_NativeWGResyncDoesNotPersistStopped(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if hasAction(actions, ActionPersistStopped) {
+		t.Error("reconnect resync must not persist Enabled=false")
+	}
+	if !hasAction(actions, ActionRestoreKmod) {
+		t.Error("reconnect resync without ASC should restore kmod proxy")
+	}
+	if hasAction(actions, ActionPersistRunning) {
+		t.Error("reconnect resync without ASC should not rewrite running state for an already-running tunnel")
+	}
+}
+
+func TestDecide_Restart_NativeWGDoesNotPersistStopped(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventRestart, Tunnel: "awg0"}, &s)
+
+	if hasAction(actions, ActionPersistStopped) {
+		t.Error("restart must not persist Enabled=false")
+	}
+	if !hasAction(actions, ActionPersistRunning) {
+		t.Error("restart should persist running state after start")
+	}
+}
+
+func TestDecide_Reconnect_EnabledStoppedKernelTunnelIsColdStarted(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Enabled: true, Running: false,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if !hasAction(actions, ActionColdStartKernel) {
+		t.Error("enabled stopped kernel tunnel should be cold-started on reconnect")
+	}
+	if !hasAction(actions, ActionStartMonitoring) {
+		t.Error("enabled stopped tunnel with ping-check should start monitoring after cold-start")
+	}
+}
+
+func TestDecide_Reconnect_RestoresEndpointTracking(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Running: true}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if !hasAction(actions, ActionRestoreEndpointTracking) {
+		t.Error("Reconnect should restore endpoint tracking")
+	}
+}
+
+func TestDecide_Reconnect_IncludesRoutingReconcile(t *testing.T) {
+	s := newState()
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if !hasAction(actions, ActionReconcileStaticRoutes) {
+		t.Error("expected ActionReconcileStaticRoutes")
+	}
+	if !hasAction(actions, ActionReconcileDNSRoutes) {
+		t.Error("expected ActionReconcileDNSRoutes")
+	}
+}
+
+func TestDecide_Reconnect_ASCResyncsRunningNativeWG(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	restores := filterActions(actions, ActionRestoreKmod)
+	if len(restores) != 0 {
+		t.Errorf("ASC firmware should not restore kmod, got %d", len(restores))
+	}
+	stops := filterActions(actions, ActionStopNativeWG)
+	if len(stops) != 0 {
+		t.Errorf("ASC reconnect resync must not stop NativeWG, got %d stops", len(stops))
+	}
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 1 {
+		t.Errorf("ASC firmware should resync running NativeWG, got %d starts", len(starts))
+	}
+}
+
+func TestDecide_Reconnect_ASCResync_StartsMonitoringOnce(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0, Monitoring: true,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	stopMon := filterActions(actions, ActionStopMonitoring)
+	if len(stopMon) != 0 {
+		t.Errorf("ASC reconnect resync should not stop monitoring first, got %d StopMonitoring", len(stopMon))
+	}
+	startMon := filterActions(actions, ActionStartMonitoring)
+	if len(startMon) != 1 {
+		t.Errorf("expected exactly 1 StartMonitoring during ASC resync, got %d", len(startMon))
+	}
+}
+
+func TestDecide_Start_KernelTunnel(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Enabled: false, Running: false,
+		ISPInterface: "",
+		PingCheck:    &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventStart, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionColdStartKernel) {
+		t.Error("expected ActionColdStartKernel")
+	}
+	if !hasAction(actions, ActionStartMonitoring) {
+		t.Error("expected ActionStartMonitoring")
+	}
+	if !hasAction(actions, ActionApplyDNSRoutes) {
+		t.Error("expected ActionApplyDNSRoutes")
+	}
+	if !hasAction(actions, ActionPersistRunning) {
+		t.Error("expected ActionPersistRunning")
+	}
+}
+
+func TestDecide_Start_NativeWGTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: false, NWGIndex: 0,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventStart, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("expected ActionStartNativeWG")
+	}
+	if !hasAction(actions, ActionConfigurePingCheck) {
+		t.Error("expected ActionConfigurePingCheck for NativeWG")
+	}
+	if !hasAction(actions, ActionStartMonitoring) {
+		t.Error("expected ActionStartMonitoring")
+	}
+}
+
+// External conf=running (e.g. user enabled the interface from the router's
+// own web UI) must start the tunnel even when awg-manager's store says
+// Enabled=false. The user's intent ("on") wins; the start path re-persists
+// Enabled=true. Self-induced hooks are already filtered upstream by
+// consumeExpectedHook, so a conf=running reaching decide is genuinely
+// external. (issue #183 — router-UI enable case.)
+func TestDecide_NDMSHook_Running_ExternalEnableWhileDisabled_Starts(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: false, Running: false, NWGIndex: 0,
+	}
+
+	// NDMSName for NWGIndex 0 is "Wireguard0".
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "running"}, &s)
+
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("expected ActionStartNativeWG — external conf=running must start even when Enabled=false")
+	}
+	if !hasAction(actions, ActionPersistRunning) {
+		t.Error("expected ActionPersistRunning to sync Enabled=true to the router-UI intent")
+	}
+}
+
+// The other two guards stay: no WAN up → no start (can't), and a tunnel we
+// already consider Running → no restart (avoids flap).
+func TestDecide_NDMSHook_Running_NoWAN_NoStart(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return false }
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: false, Running: false, NWGIndex: 0}
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "running"}, &s)
+	if len(actions) != 0 {
+		t.Errorf("no WAN up: expected no actions, got %d", len(actions))
+	}
+}
+
+func TestDecide_NDMSHook_Running_AlreadyRunning_NoStart(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0}
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "running"}, &s)
+	if len(actions) != 0 {
+		t.Errorf("already running: expected no actions, got %d", len(actions))
+	}
+}
+
+func TestDecide_Start_AlreadyRunning(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Running: true}
+
+	actions := decide(Event{Type: EventStart, Tunnel: "awg0"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("already running tunnel should produce no actions, got %d", len(actions))
+	}
+}
+
+func TestDecide_Start_NotFound(t *testing.T) {
+	s := newState()
+
+	actions := decide(Event{Type: EventStart, Tunnel: "awg99"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("nonexistent tunnel should produce no actions, got %d", len(actions))
+	}
+}
+
+func TestDecide_Start_NoPingCheck(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: false,
+	}
+
+	actions := decide(Event{Type: EventStart, Tunnel: "awg0"}, &s)
+
+	if hasAction(actions, ActionStartMonitoring) {
+		t.Error("no PingCheck config — should not start monitoring")
+	}
+	if hasAction(actions, ActionConfigurePingCheck) {
+		t.Error("no PingCheck config — should not configure ping check")
+	}
+}
+
+func TestDecide_Stop_RunningKernel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: true, Monitoring: true,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventStop, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionStopMonitoring) {
+		t.Error("expected ActionStopMonitoring BEFORE stop")
+	}
+	if !hasAction(actions, ActionStopKernel) {
+		t.Error("expected ActionStopKernel")
+	}
+	if !hasAction(actions, ActionRemoveStaticRoutes) {
+		t.Error("expected ActionRemoveStaticRoutes")
+	}
+	if !hasAction(actions, ActionRemoveClientRoutes) {
+		t.Error("expected ActionRemoveClientRoutes")
+	}
+	if !hasAction(actions, ActionPersistStopped) {
+		t.Error("expected ActionPersistStopped")
+	}
+}
+
+func TestDecide_Quiesce_StopsRunningWithoutPersist(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: true, Monitoring: true,
+	}
+	s.tunnels["awg1"] = &tunnelState{
+		ID: "awg1", Backend: "nativewg", Running: false,
+	}
+
+	actions := decide(Event{Type: EventQuiesce}, &s)
+
+	if !hasAction(actions, ActionStopMonitoring) {
+		t.Error("expected ActionStopMonitoring")
+	}
+	if !hasAction(actions, ActionStopKernel) {
+		t.Error("expected ActionStopKernel for running tunnel")
+	}
+	if hasAction(actions, ActionStopNativeWG) {
+		t.Error("did not expect ActionStopNativeWG for stopped tunnel")
+	}
+	if hasAction(actions, ActionPersistStopped) {
+		t.Error("quiesce must not persist stopped/enabled=false")
+	}
+	if hasAction(actions, ActionRemoveStaticRoutes) {
+		t.Error("quiesce must not remove routes")
+	}
+}
+
+func TestDecide_Stop_NotRunning_StillFiresActions(t *testing.T) {
+	// Regression: tunnel in NeedsStart (Running=false but NDMS intent up,
+	// e.g. after router reboot when auto-start hasn't fired). User clicks
+	// Stop to cancel that pending intent. We must still fire StopKernel +
+	// PersistStopped — otherwise the API silently logs success while
+	// nothing happens, trapping the user (the toggle will keep firing
+	// Stop and never Start).
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Running: false}
+
+	actions := decide(Event{Type: EventStop, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionStopKernel) {
+		t.Error("expected ActionStopKernel even when Running=false (cancel pending NDMS intent)")
+	}
+	if !hasAction(actions, ActionPersistStopped) {
+		t.Error("expected ActionPersistStopped to clear stored.Enabled")
+	}
+}
+
+func TestDecide_Stop_NativeWG_RemovesPingCheck(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0, Monitoring: true,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventStop, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionRemovePingCheck) {
+		t.Error("NativeWG stop should remove NDMS ping-check profile")
+	}
+	if !hasAction(actions, ActionStopNativeWG) {
+		t.Error("expected ActionStopNativeWG")
+	}
+}
+
+func TestDecide_Stop_NotFound(t *testing.T) {
+	s := newState()
+
+	actions := decide(Event{Type: EventStop, Tunnel: "awg99"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("nonexistent tunnel should produce no actions, got %d", len(actions))
+	}
+}
+
+func TestDecide_Stop_MonitoringOrder(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: true, Monitoring: true,
+	}
+
+	actions := decide(Event{Type: EventStop, Tunnel: "awg0"}, &s)
+
+	// StopMonitoring must come BEFORE StopKernel
+	monIdx, stopIdx := -1, -1
+	for i, a := range actions {
+		if a.Type == ActionStopMonitoring {
+			monIdx = i
+		}
+		if a.Type == ActionStopKernel {
+			stopIdx = i
+		}
+	}
+	if monIdx == -1 {
+		t.Fatal("missing StopMonitoring")
+	}
+	if stopIdx == -1 {
+		t.Fatal("missing StopKernel")
+	}
+	if monIdx > stopIdx {
+		t.Error("StopMonitoring must come before StopKernel")
+	}
+}
+
+// === NDMS Hook tests ===
+
+func TestDecide_NDMSHook_IgnoresNonConf(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", NWGIndex: 0}
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "link", Level: "up"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("non-conf layer should be ignored, got %d actions", len(actions))
+	}
+}
+
+func TestDecide_NDMSHook_IgnoresAlreadyRunning(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, Enabled: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "running"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("already running should produce no actions, got %d", len(actions))
+	}
+}
+
+// NOTE: the former TestDecide_NDMSHook_IgnoresDisabled was removed — an
+// external conf=running now intentionally starts a disabled tunnel (the
+// user's router-UI "on" intent wins). See
+// TestDecide_NDMSHook_Running_ExternalEnableWhileDisabled_Starts.
+
+func TestDecide_NDMSHook_IgnoresNoWAN(t *testing.T) {
+	s := newState()
+	// No WAN up
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: false, Enabled: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "running"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("no WAN up should not start tunnel, got %d actions", len(actions))
+	}
+}
+
+func TestDecide_NDMSHook_StartsEnabledNotRunning(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: false, Enabled: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "running"}, &s)
+
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("enabled, not-running tunnel should be started")
+	}
+}
+
+func TestDecide_NDMSHook_StopsRunningOnDisabled(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, Enabled: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "disabled"}, &s)
+
+	// External disable (admin UI toggle) for nativewg is treated like for kernel:
+	// stop cleanly and persist the disabled state. The old ExternalRestart
+	// path was removed because it re-enabled tunnels the user had just disabled.
+	if !hasAction(actions, ActionStopNativeWG) {
+		t.Error("running nativewg with level=disabled should stop the tunnel")
+	}
+	if !hasAction(actions, ActionPersistStopped) {
+		t.Error("running nativewg with level=disabled should persist enabled=false")
+	}
+}
+
+func TestDecide_NDMSHook_UnknownInterface(t *testing.T) {
+	s := newState()
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "UnknownIface", Layer: "conf", Level: "running"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("unknown interface should produce no actions, got %d", len(actions))
+	}
+}
+
+func TestDecide_NDMSHook_StopAlreadyStopped(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: false, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "disabled"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("already stopped should produce no actions, got %d", len(actions))
+	}
+}
+
+// === WAN event tests ===
+
+func TestDecide_WANUp_ResumesNativeWG(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: false, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("WAN up should resume suspended NativeWG tunnel")
+	}
+}
+
+func TestDecide_WANUp_SkipsWithASC(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: false, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	if hasAction(actions, ActionStartNativeWG) {
+		t.Error("ASC firmware: WAN up should not start NativeWG")
+	}
+}
+
+// TestDecide_WANUp_ResumesNativeWGAfterSingleWANFlap covers the single-WAN
+// flap scenario reported on KN-1910 / NDMS 5.0.11. After WAN-down, the
+// orchestrator runs SuspendProxy but keeps Running=true and ActiveWAN
+// preserved (see orchestrator.updateState comment). When that same WAN
+// comes back up, decideWANUp must emit ActionStartNativeWG — otherwise
+// the tunnel hangs in conf=running, link=false, peer=false until the
+// user manually toggles Disable→Enable.
+func TestDecide_WANUp_ResumesNativeWGAfterSingleWANFlap(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID:        "awg0",
+		Backend:   "nativewg",
+		Enabled:   true,
+		Running:   true,   // preserved across SuspendProxy
+		ActiveWAN: "ppp0", // matches the iface that's coming back up
+		NWGIndex:  0,
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "ppp0"}, &s)
+
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("WAN up on the same iface that the tunnel was suspended on must trigger StartNativeWG")
+	}
+}
+
+// TestDecide_WANUp_SkipsRunningOnDifferentWAN covers the multi-WAN
+// no-churn invariant: tunnel actively running on ppp0; ppp1 comes up
+// — leave the tunnel alone, no peer reconnect needed.
+func TestDecide_WANUp_SkipsRunningOnDifferentWAN(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID:        "awg0",
+		Backend:   "nativewg",
+		Enabled:   true,
+		Running:   true,
+		ActiveWAN: "ppp0", // tunnel is on ppp0
+		NWGIndex:  0,
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "ppp1"}, &s)
+
+	if hasAction(actions, ActionStartNativeWG) {
+		t.Error("WAN up on a different iface must NOT restart a tunnel running on another WAN")
+	}
+}
+
+func TestDecide_WANDown_SuspendsNativeWG(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "eth3", ActiveWAN: "eth3", // bound to eth3
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	if !hasAction(actions, ActionSuspendProxy) {
+		t.Error("WAN down should suspend NativeWG proxy")
+	}
+}
+
+func TestDecide_WANDown_SkipsWithASC(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	if hasAction(actions, ActionSuspendProxy) {
+		t.Error("ASC firmware: WAN down should not suspend NativeWG")
+	}
+}
+
+func TestDecide_WANDown_FailoverToAlternateWAN(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true } // alternate WAN still up
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "eth3", ActiveWAN: "eth3", // bound to eth3
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	if !hasAction(actions, ActionSuspendProxy) {
+		t.Error("expected SuspendProxy")
+	}
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("expected StartNativeWG (failover to alternate WAN)")
+	}
+}
+
+func TestDecide_WANDown_NoFailoverIfNoAlternateWAN(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	// No other WANs up
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "eth3", ActiveWAN: "eth3", // bound to eth3
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	if !hasAction(actions, ActionSuspendProxy) {
+		t.Error("expected SuspendProxy")
+	}
+	if hasAction(actions, ActionStartNativeWG) {
+		t.Error("no alternate WAN — should NOT failover")
+	}
+}
+
+// === Delete tests ===
+
+func TestDecide_Delete_RunningTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: true, Monitoring: true,
+	}
+
+	actions := decide(Event{Type: EventDelete, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionStopMonitoring) {
+		t.Error("delete should stop monitoring first")
+	}
+	if !hasAction(actions, ActionDeleteKernel) {
+		t.Error("expected ActionDeleteKernel")
+	}
+	if !hasAction(actions, ActionDeleteStaticRoutes) {
+		t.Error("expected static route delete cleanup")
+	}
+	if !hasAction(actions, ActionDeleteClientRoutes) {
+		t.Error("expected client route delete cleanup")
+	}
+	if !hasAction(actions, ActionDeleteDNSRoutes) {
+		t.Error("expected DNS route delete cleanup")
+	}
+}
+
+func TestDecide_Delete_StoppedTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: false, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventDelete, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionDeleteNativeWG) {
+		t.Error("expected ActionDeleteNativeWG even for stopped tunnel")
+	}
+	if hasAction(actions, ActionStopNativeWG) {
+		t.Error("should not stop already stopped tunnel")
+	}
+}
+
+func TestDecide_Delete_NotFound(t *testing.T) {
+	s := newState()
+
+	actions := decide(Event{Type: EventDelete, Tunnel: "awg99"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("nonexistent tunnel should produce no actions, got %d", len(actions))
+	}
+}
+
+func TestDecide_Delete_RunningNativeWG_RemovesPingCheck(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, Monitoring: true, NWGIndex: 0,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventDelete, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionStopMonitoring) {
+		t.Error("expected ActionStopMonitoring")
+	}
+	if !hasAction(actions, ActionRemovePingCheck) {
+		t.Error("running NativeWG delete should remove ping-check profile")
+	}
+	if !hasAction(actions, ActionDeleteNativeWG) {
+		t.Error("expected ActionDeleteNativeWG")
+	}
+}
+
+func TestDecide_Delete_DNSRouteCleanup(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Running: false}
+
+	actions := decide(Event{Type: EventDelete, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionDeleteDNSRoutes) {
+		t.Error("delete should call OnTunnelDelete for DNS routes")
+	}
+	if hasAction(actions, ActionApplyDNSRoutes) {
+		t.Error("delete should NOT use ApplyDNSRoutes (reconcile without cleanup)")
+	}
+}
+
+func TestDecide_Delete_RouteCleanupBeforeInterfaceDelete(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventDelete, Tunnel: "awg0"}, &s)
+
+	// All route Delete* actions must come BEFORE ActionDeleteNativeWG.
+	deleteIdx := -1
+	for i, a := range actions {
+		if a.Type == ActionDeleteNativeWG {
+			deleteIdx = i
+			break
+		}
+	}
+	if deleteIdx == -1 {
+		t.Fatal("missing ActionDeleteNativeWG")
+	}
+
+	for _, routeAction := range []ActionType{ActionDeleteDNSRoutes, ActionDeleteStaticRoutes, ActionDeleteClientRoutes} {
+		idx := -1
+		for i, a := range actions {
+			if a.Type == routeAction {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			t.Fatalf("missing action type %d", routeAction)
+		}
+		if idx > deleteIdx {
+			t.Errorf("route cleanup action %d (index %d) must come before ActionDeleteNativeWG (index %d)", routeAction, idx, deleteIdx)
+		}
+	}
+}
+
+// === Restart tests ===
+
+func TestDecide_Restart_StopThenStart(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: true, Monitoring: true,
+	}
+
+	actions := decide(Event{Type: EventRestart, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionStopKernel) {
+		t.Error("restart should stop first")
+	}
+	if !hasAction(actions, ActionColdStartKernel) {
+		t.Error("restart should start after stop")
+	}
+}
+
+func TestDecide_Restart_NativeWG(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventRestart, Tunnel: "awg0"}, &s)
+
+	if !hasAction(actions, ActionStopNativeWG) {
+		t.Error("restart should stop NativeWG")
+	}
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("restart should start NativeWG")
+	}
+}
+
+func TestDecide_Restart_NotRunning(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: false,
+	}
+
+	actions := decide(Event{Type: EventRestart, Tunnel: "awg0"}, &s)
+
+	// Restart of stopped tunnel = just start
+	if !hasAction(actions, ActionColdStartKernel) {
+		t.Error("restart of stopped tunnel should just start it")
+	}
+	if hasAction(actions, ActionStopKernel) {
+		t.Error("stopped tunnel should not be stopped again")
+	}
+}
+
+func TestDecide_Restart_NotFound(t *testing.T) {
+	s := newState()
+
+	actions := decide(Event{Type: EventRestart, Tunnel: "awg99"}, &s)
+
+	if len(actions) != 0 {
+		t.Errorf("nonexistent tunnel should produce no actions, got %d", len(actions))
+	}
+}
+
+func TestDecide_Restart_StopOrder(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: true, Monitoring: true,
+	}
+
+	actions := decide(Event{Type: EventRestart, Tunnel: "awg0"}, &s)
+
+	// Stop actions must come before start actions
+	stopIdx := -1
+	startIdx := -1
+	for i, a := range actions {
+		if a.Type == ActionStopKernel && stopIdx == -1 {
+			stopIdx = i
+		}
+		if a.Type == ActionColdStartKernel && startIdx == -1 {
+			startIdx = i
+		}
+	}
+	if stopIdx == -1 || startIdx == -1 {
+		t.Fatal("missing stop or start action")
+	}
+	if stopIdx > startIdx {
+		t.Error("stop must come before start in restart")
+	}
+}
+
+// === WAN binding tests ===
+
+func TestDecide_WANDown_OnlySuspendsBoundTunnels(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "eth3", ActiveWAN: "eth3", // bound to eth3
+	}
+	s.tunnels["awg1"] = &tunnelState{
+		ID: "awg1", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 1,
+		ISPInterface: "ppp0", ActiveWAN: "ppp0", // bound to ppp0
+	}
+
+	// eth3 goes down — only awg0 should be suspended
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	suspends := filterActions(actions, ActionSuspendProxy)
+	if len(suspends) != 1 {
+		t.Errorf("expected 1 suspend (awg0 only), got %d", len(suspends))
+	}
+	if len(suspends) > 0 && suspends[0].Tunnel != "awg0" {
+		t.Errorf("expected awg0 suspended, got %s", suspends[0].Tunnel)
+	}
+}
+
+func TestDecide_WANDown_AutoModeSuspendsOnAnyWAN(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "", ActiveWAN: "eth3", // auto mode, currently using eth3
+	}
+
+	// eth3 goes down — auto-mode tunnel should be suspended (it was using eth3)
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	if !hasAction(actions, ActionSuspendProxy) {
+		t.Error("auto-mode tunnel using downed WAN should be suspended")
+	}
+}
+
+func TestDecide_WANDown_AutoModeNotAffectedByOtherWAN(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "", ActiveWAN: "ppp0", // auto mode, currently using ppp0
+	}
+
+	// eth3 goes down — tunnel uses ppp0, not affected
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	suspends := filterActions(actions, ActionSuspendProxy)
+	if len(suspends) != 0 {
+		t.Errorf("tunnel using different WAN should not be suspended, got %d suspends", len(suspends))
+	}
+}
+
+func TestDecide_WANUp_OnlyResumesMatchingTunnels(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: false, NWGIndex: 0,
+		ISPInterface: "eth3", // bound to eth3
+	}
+	s.tunnels["awg1"] = &tunnelState{
+		ID: "awg1", Backend: "nativewg", Enabled: true, Running: false, NWGIndex: 1,
+		ISPInterface: "ppp0", // bound to ppp0 — should NOT start on eth3 up
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 1 {
+		t.Errorf("expected 1 start (awg0 only), got %d", len(starts))
+	}
+	if len(starts) > 0 && starts[0].Tunnel != "awg0" {
+		t.Errorf("expected awg0 started, got %s", starts[0].Tunnel)
+	}
+}
+
+func TestDecide_WANUp_AutoModeStartsOnAnyWAN(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: false, NWGIndex: 0,
+		ISPInterface: "", // auto mode — starts on any WAN
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("auto-mode tunnel should start on any WAN up")
+	}
+}
+
+func TestDecide_WANDown_FailoverOnlyForAffectedTunnels(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true } // alternate WAN
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "eth3", ActiveWAN: "eth3", // bound to eth3 — affected
+	}
+	s.tunnels["awg1"] = &tunnelState{
+		ID: "awg1", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 1,
+		ISPInterface: "ppp0", ActiveWAN: "ppp0", // bound to ppp0 — NOT affected
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	// awg0: suspend + failover start. awg1: nothing.
+	suspends := filterActions(actions, ActionSuspendProxy)
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(suspends) != 1 || suspends[0].Tunnel != "awg0" {
+		t.Errorf("only awg0 should be suspended, got %v", suspends)
+	}
+	if len(starts) != 1 || starts[0].Tunnel != "awg0" {
+		t.Errorf("only awg0 should failover, got %v", starts)
+	}
+}
+
+func TestDecide_Boot_ObfuscatedNativeWG_AlwaysFullStart(t *testing.T) {
+	for _, asc := range []bool{true, false} {
+		for _, running := range []bool{true, false} {
+			s := newState()
+			s.supportsASC = asc
+			s.tunnels["awg20"] = &tunnelState{ID: "awg20", Backend: "nativewg", Enabled: true, NWGIndex: 3, Obfuscated: true, Running: running}
+			actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+			if n := len(filterActions(actions, ActionStartNativeWG)); n != 1 {
+				t.Errorf("asc=%v running=%v: StartNativeWG=%d, want 1", asc, running, n)
+			}
+			for _, bad := range []ActionType{ActionReconcileNativeWG, ActionRestoreKmod, ActionSuspendProxy, ActionStopNativeWG} {
+				if len(filterActions(actions, bad)) != 0 {
+					t.Errorf("asc=%v running=%v: unexpected %v", asc, running, bad)
+				}
+			}
+		}
+	}
+}
+
+func TestDecide_ReconnectAndWAN_Obfuscated(t *testing.T) {
+	for _, asc := range []bool{true, false} {
+		s := newState()
+		s.supportsASC = asc
+		s.tunnels["awg20"] = &tunnelState{ID: "awg20", Backend: "nativewg", Enabled: true, NWGIndex: 3, Obfuscated: true, Running: true, ActiveWAN: "ppp0"}
+
+		re := decide(Event{Type: EventReconnect}, &s)
+		if len(filterActions(re, ActionStartNativeWG)) != 1 || len(filterActions(re, ActionRestoreKmod)) != 0 {
+			t.Errorf("asc=%v reconnect: %v", asc, re)
+		}
+		up := decide(Event{Type: EventWANUp, WANIface: "ppp0"}, &s)
+		if len(filterActions(up, ActionStartNativeWG)) != 1 {
+			t.Errorf("asc=%v wan-up must re-Start (host-route): %v", asc, up)
+		}
+		down := decide(Event{Type: EventWANDown, WANIface: "ppp0"}, &s)
+		if len(filterActions(down, ActionSuspendProxy)) != 0 || len(filterActions(down, ActionStopNativeWG)) != 0 {
+			t.Errorf("asc=%v wan-down must not touch obfuscated tunnel: %v", asc, down)
+		}
+	}
+}
+
+func TestTunnelStateFromStored_Obfuscated(t *testing.T) {
+	ts := tunnelStateFromStored(&storage.AWGTunnel{ID: "awg20", Backend: "nativewg",
+		Peer:       storage.AWGPeer{Endpoint: "127.0.0.1:39000"},
+		Obfuscator: &storage.Obfuscator{Flavor: "phobos", LocalPort: 39000}})
+	if !ts.Obfuscated || ts.ViaProxy || ts.EndpointMayV6 {
+		t.Fatalf("%+v", ts)
+	}
+}
+
+// === Test helpers ===
+
+func filterActions(actions []Action, typ ActionType) []Action {
+	var result []Action
+	for _, a := range actions {
+		if a.Type == typ {
+			result = append(result, a)
+		}
+	}
+	return result
+}
+
+func hasAction(actions []Action, typ ActionType) bool {
+	return len(filterActions(actions, typ)) > 0
+}
+
+func assertNoActionForTunnel(t *testing.T, actions []Action, tunnelID string, typ ActionType) {
+	t.Helper()
+	for _, a := range actions {
+		if a.Type == typ && a.Tunnel == tunnelID {
+			t.Errorf("unexpected %v for tunnel %s", typ, tunnelID)
+		}
+	}
+}
+
+func TestDecide_Boot_ReconcilesRunningKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+	}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	// Running kernel tunnel should be reconciled, not cold-started.
+	reconciles := filterActions(actions, ActionReconcileKernel)
+	if len(reconciles) != 1 {
+		t.Errorf("expected 1 ReconcileKernel for running tunnel, got %d", len(reconciles))
+	}
+	coldStarts := filterActions(actions, ActionColdStartKernel)
+	if len(coldStarts) != 0 {
+		t.Errorf("expected 0 ColdStartKernel for running tunnel, got %d", len(coldStarts))
+	}
+}
+
+func TestDecide_Boot_ColdStartsStoppedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
+	}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	coldStarts := filterActions(actions, ActionColdStartKernel)
+	if len(coldStarts) != 1 {
+		t.Errorf("expected 1 ColdStartKernel for stopped tunnel, got %d", len(coldStarts))
+	}
+}
+
+func TestDecide_Reconnect_ReconcilesRunningKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	reconciles := filterActions(actions, ActionReconcileKernel)
+	if len(reconciles) != 1 {
+		t.Errorf("expected 1 ReconcileKernel on reconnect, got %d", len(reconciles))
+	}
+}
+
+func TestDecide_Reconnect_EnabledStoppedKernelTunnelNotReconciled(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	reconciles := filterActions(actions, ActionReconcileKernel)
+	if len(reconciles) != 0 {
+		t.Errorf("stopped tunnel should not be reconciled on reconnect, got %d", len(reconciles))
+	}
+	coldStarts := filterActions(actions, ActionColdStartKernel)
+	if len(coldStarts) != 1 {
+		t.Errorf("enabled stopped tunnel should be cold-started on reconnect, got %d", len(coldStarts))
+	}
+}
+
+func TestDecide_Reconnect_DisabledStoppedKernelTunnelSkipped(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: false, Running: false,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if hasAction(actions, ActionColdStartKernel) {
+		t.Error("disabled tunnel must not be started on reconnect")
+	}
+	if hasAction(actions, ActionStartMonitoring) {
+		t.Error("disabled tunnel must not start monitoring on reconnect")
+	}
+}
+
+func TestDecide_Reconnect_EnabledStoppedNativeWGWithASCIsStarted(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg20"] = &tunnelState{
+		ID: "awg20", Backend: "nativewg", Enabled: true, Running: false, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("enabled stopped nativewg tunnel should be started on reconnect even with ASC")
+	}
+	if !hasAction(actions, ActionPersistRunning) {
+		t.Error("reconnect-started nativewg tunnel should persist running state")
+	}
+}
+
+func TestDecide_WANDown_SuspendsAffectedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "eth3", ActiveWAN: "eth3",
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	suspends := filterActions(actions, ActionSuspendKernel)
+	if len(suspends) != 1 {
+		t.Errorf("expected 1 SuspendKernel for affected tunnel, got %d", len(suspends))
+	}
+}
+
+func TestDecide_WANDown_DoesNotSuspendUnaffectedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "eth4", ActiveWAN: "eth4",
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	suspends := filterActions(actions, ActionSuspendKernel)
+	if len(suspends) != 0 {
+		t.Errorf("unaffected tunnel should not be suspended, got %d", len(suspends))
+	}
+}
+
+func TestDecide_WANDown_SuspendsAutoBoundKernelTunnel(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "", ActiveWAN: "eth3", // auto mode, currently on eth3
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	suspends := filterActions(actions, ActionSuspendKernel)
+	if len(suspends) != 1 {
+		t.Errorf("auto-mode tunnel on downed WAN should be suspended, got %d", len(suspends))
+	}
+}
+
+func TestDecide_WANUp_ResumesKernelTunnelBoundToWAN(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "eth3",
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	resumes := filterActions(actions, ActionResumeKernel)
+	if len(resumes) != 1 {
+		t.Errorf("expected 1 ResumeKernel for matching tunnel, got %d", len(resumes))
+	}
+}
+
+func TestDecide_WANUp_StartsStoppedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
+		ISPInterface: "eth3",
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	starts := filterActions(actions, ActionColdStartKernel)
+	if len(starts) != 1 {
+		t.Errorf("expected 1 ColdStartKernel for stopped tunnel on WAN up, got %d", len(starts))
+	}
+}
+
+func TestDecide_WANUp_DoesNotResumeUnboundKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "eth4",
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	resumes := filterActions(actions, ActionResumeKernel)
+	if len(resumes) != 0 {
+		t.Errorf("kernel tunnel bound to other WAN should not be resumed, got %d", len(resumes))
+	}
+}
+
+// Auto-mode tunnel suspended (was on eth3 which went down).
+// On any WAN coming up: must Reconcile (re-resolve WAN, refresh endpoint route),
+// not just Resume (Resume only does ip link up on the dead interface).
+func TestDecide_WANUp_ReconcilesAutoModeKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "", ActiveWAN: "eth3", // auto mode, was on eth3
+	}
+
+	// eth4 (different WAN) comes up
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth4"}, &s)
+
+	reconciles := filterActions(actions, ActionReconcileKernel)
+	if len(reconciles) != 1 {
+		t.Errorf("expected 1 ReconcileKernel for auto-mode tunnel on WAN up, got %d", len(reconciles))
+	}
+	resumes := filterActions(actions, ActionResumeKernel)
+	if len(resumes) != 0 {
+		t.Errorf("auto-mode tunnel should NOT be resumed (Resume only does link up on dead WAN), got %d", len(resumes))
+	}
+}
+
+func TestDecide_WANDown_NativeWGAutoMode_WithActiveWAN_TriggersFailover(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true } // backup WAN available
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "", ActiveWAN: "ppp0", // auto mode, NDMS picked ppp0
+	}
+
+	// ppp0 falls — auto-mode nativewg with ActiveWAN=ppp0 must suspend AND restart
+	actions := decide(Event{Type: EventWANDown, WANIface: "ppp0"}, &s)
+
+	if !hasAction(actions, ActionSuspendProxy) {
+		t.Error("expected ActionSuspendProxy for auto-mode nativewg whose ActiveWAN matches downed WAN")
+	}
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("expected ActionStartNativeWG (failover restart) when backup WAN is available")
+	}
+}
+
+func TestDecide_WANDown_NativeWGAutoMode_StaleActiveWAN_NoFailover(t *testing.T) {
+	// Regression guard: this is the bug. If ActiveWAN is empty (the historical
+	// state for nativewg before this fix), the tunnel is not considered affected.
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "", ActiveWAN: "", // stale: ActiveWAN never populated
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "ppp0"}, &s)
+
+	if hasAction(actions, ActionSuspendProxy) {
+		t.Error("with empty ActiveWAN the tunnel must NOT be considered affected (documents the bug surface)")
+	}
+}
+
+// === External restart tests ===
+
+// TestDecideNDMSHook_ExternalDisabled_NWG: ручной disable из админки роутера
+// для nativewg-туннеля теперь даёт обычный Stop+PersistStopped — раньше
+// неявно форсилcя ActionExternalRestart, который поднимал туннель обратно
+// против воли пользователя (см. историю фикса).
+func TestDecideNDMSHook_ExternalDisabled_NWG(t *testing.T) {
+	s := State{
+		tunnels: map[string]*tunnelState{
+			"awg10": {
+				ID: "awg10", Name: "test", Backend: "nativewg",
+				Enabled: true, Running: true, NWGIndex: 0,
+			},
+		},
+		anyWANUpFn: func() bool { return true },
+	}
+	actions := decide(Event{
+		Type: EventNDMSHook, NDMSName: "Wireguard0",
+		Layer: "conf", Level: "disabled",
+	}, &s)
+	if !hasAction(actions, ActionStopNativeWG) {
+		t.Error("nativewg external disable: expected ActionStopNativeWG")
+	}
+	if !hasAction(actions, ActionPersistStopped) {
+		t.Error("nativewg external disable: expected ActionPersistStopped (user intent respected)")
+	}
+}
+
+func TestDecideNDMSHook_ExternalDisabled_KernelTunnel(t *testing.T) {
+	s := State{
+		tunnels: map[string]*tunnelState{
+			"awg0": {
+				ID: "awg0", Name: "test", Backend: "kernel",
+				Enabled: true, Running: true,
+			},
+		},
+		anyWANUpFn: func() bool { return true },
+	}
+	actions := decide(Event{
+		Type: EventNDMSHook, NDMSName: "OpkgTun0",
+		Layer: "conf", Level: "disabled",
+	}, &s)
+	if !hasAction(actions, ActionPersistStopped) {
+		t.Error("kernel tunnel: expected normal PersistStopped")
+	}
+}
+
+func TestDecide_NDMSHook_DisabledIgnoredDuringQuiescence(t *testing.T) {
+	s := newState()
+	now := time.Unix(2000, 0)
+	tun := &tunnelState{
+		ID: "awg11", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 2,
+		quiescentUntil: now.Add(10 * time.Second), // still settling
+	}
+	s.tunnels["awg11"] = tun
+	ev := Event{
+		Type: EventNDMSHook, Layer: "conf", Level: "disabled",
+		NDMSName: tun.ndmsName(), Now: now,
+	}
+
+	actions := decide(ev, &s)
+
+	if len(actions) != 0 {
+		t.Fatalf("a transient conf=disabled during quiescence must NOT stop the tunnel, got %d actions", len(actions))
+	}
+}
+
+func TestDecide_NDMSHook_DisabledStopsAfterQuiescence(t *testing.T) {
+	s := newState()
+	now := time.Unix(2000, 0)
+	tun := &tunnelState{
+		ID: "awg11", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 2,
+		quiescentUntil: now.Add(-1 * time.Second), // window elapsed
+	}
+	s.tunnels["awg11"] = tun
+	ev := Event{
+		Type: EventNDMSHook, Layer: "conf", Level: "disabled",
+		NDMSName: tun.ndmsName(), Now: now,
+	}
+
+	actions := decide(ev, &s)
+
+	if !hasAction(actions, ActionStopNativeWG) {
+		t.Fatal("a conf=disabled after the quiescence window must stop the tunnel (user intent honoured)")
+	}
+}
+
+// Загрузка с неподнятым WAN: бут не выполняется, но помечает себя
+// несостоявшимся. Без пометки пришедший позже EventWANUp решал бы обычным
+// путём, а он не делает ни глобального sweep'а маршрутов, ни того, что нужно
+// nativewg-туннелям после ребута роутера.
+func TestDecideBoot_WANDownArmsPending(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{ID: "awg10", Backend: "kernel", Enabled: true}
+
+	if got := decideBoot(Event{Type: EventBoot, WANUp: false}, &s); len(got) != 0 {
+		t.Fatalf("бут без WAN обязан не давать действий, получено: %v", got)
+	}
+	if !s.bootPending {
+		t.Fatal("бут без WAN обязан пометить себя несостоявшимся")
+	}
+}
+
+// Состоявшийся бут снимает пометку: иначе первый же WAN-фронт когда-нибудь
+// потом выстрелил бы полным бутом на ровном месте.
+func TestDecideBoot_WANUpClearsPending(t *testing.T) {
+	s := newState()
+	s.bootPending = true
+	s.tunnels["awg10"] = &tunnelState{ID: "awg10", Backend: "kernel", Enabled: true}
+
+	got := decideBoot(Event{Type: EventBoot, WANUp: true}, &s)
+	if s.bootPending {
+		t.Error("состоявшийся бут обязан снимать пометку")
+	}
+	if len(filterActions(got, ActionColdStartKernel)) != 1 {
+		t.Errorf("ожидали холодный старт туннеля, действия: %v", got)
+	}
+}
+
+// Реконнект делает всю работу бута (в т.ч. на пути quiesce/resume в середине
+// жизни демона) — значит обязан снимать пометку.
+func TestDecideReconnect_ClearsBootPending(t *testing.T) {
+	s := newState()
+	s.bootPending = true
+	s.anyWANUpFn = func() bool { return true }
+
+	decideReconnect(&s)
+
+	if s.bootPending {
+		t.Error("реконнект обязан снимать пометку несостоявшегося бута")
+	}
+}
+
+// Реконнект без WAN ничего не поднимает (WAN он не проверяет вовсе), поэтому
+// и снимать пометку ему нечем: экспорт бэкапа на загрузке с лежащим WAN
+// оставил бы туннели стоять до ручного старта.
+func TestDecideReconnect_KeepsBootPendingWithoutWAN(t *testing.T) {
+	s := newState()
+	s.bootPending = true
+	s.anyWANUpFn = func() bool { return false }
+
+	decideReconnect(&s)
+
+	if !s.bootPending {
+		t.Error("без WAN пометка обязана остаться")
+	}
+}
+
+// Проводка отложенного бута: первое WAN-событие обязано выполнить именно БУТ,
+// а не реконнект и не обычный decideWANUp. Разница с реконнектом видна по
+// ActionRestoreEndpointTracking (его даёт только он), разница с decideWANUp —
+// по глобальному sweep'у маршрутов (его decideWANUp не даёт вовсе).
+func TestDecideLocked_DeferredBootRunsBoot(t *testing.T) {
+	o := &Orchestrator{state: newState()}
+	o.state.supportsASC = true
+	o.state.bootPending = true
+	o.state.anyWANUpFn = func() bool { return true }
+	o.state.tunnels["awg20"] = &tunnelState{
+		ID: "awg20", Backend: "nativewg", Enabled: true, Running: false,
+		NWGIndex: 0, EndpointMayV6: true,
+	}
+
+	actions, deferred, _ := o.decideLocked(Event{Type: EventWANUp, WANIface: "ppp0"})
+
+	if !deferred {
+		t.Fatal("первое WAN-событие после бута без WAN обязано считаться отложенным бутом")
+	}
+	if len(filterActions(actions, ActionStartNativeWG)) != 1 {
+		t.Errorf("бут обязан стартовать nativewg с EndpointMayV6: %v", actions)
+	}
+	if len(filterActions(actions, ActionReconcileStaticRoutes)) != 1 {
+		t.Errorf("бут обязан дать глобальный sweep маршрутов: %v", actions)
+	}
+	if n := len(filterActions(actions, ActionRestoreEndpointTracking)); n != 0 {
+		t.Errorf("это бут, а не реконнект: RestoreEndpointTracking не ожидается (%d)", n)
+	}
+	if o.state.bootPending {
+		t.Error("пометка обязана сниматься")
+	}
+
+	// Второе событие идёт обычным путём: ASC-ветка decideWANUp пропускает.
+	actions2, deferred2, _ := o.decideLocked(Event{Type: EventWANUp, WANIface: "ppp0"})
+	if deferred2 || len(actions2) != 0 {
+		t.Errorf("второй WAN-up должен идти обычным путём, получено: deferred=%v actions=%v", deferred2, actions2)
+	}
+}
+
+// EventWANUp приходит и от интерфейсов, которые WAN-ом не являются: хук
+// отсеивает только туннельные имена, так что подъём LAN-моста br0 или
+// L2TP-клиента доезжает сюда наравне с настоящим WAN. Отложенный бут обязан
+// сверяться с моделью WAN, иначе он холодно стартует все туннели и гоняет
+// глобальный sweep маршрутов при мёртвом WAN — да ещё и снимает пометку,
+// так что настоящий WAN-up уже ничего не поднимет.
+func TestDecideLocked_DeferredBootWaitsForRealWAN(t *testing.T) {
+	o := &Orchestrator{state: newState()}
+	o.state.supportsASC = true
+	o.state.bootPending = true
+	o.state.anyWANUpFn = func() bool { return false } // модель WAN: ни одного поднятого
+	o.state.tunnels["awg20"] = &tunnelState{
+		ID: "awg20", Backend: "nativewg", Enabled: true, Running: false,
+		NWGIndex: 0, EndpointMayV6: true,
+	}
+
+	actions, _, _ := o.decideLocked(Event{Type: EventWANUp, WANIface: "br0"})
+
+	if len(actions) != 0 {
+		t.Errorf("при мёртвом WAN бут не должен давать действий: %v", actions)
+	}
+	if !o.state.bootPending {
+		t.Fatal("пометка обязана остаться — бут ещё не состоялся")
+	}
+
+	// Пришёл настоящий WAN: теперь бут обязан отработать.
+	o.state.anyWANUpFn = func() bool { return true }
+	actions2, deferred2, _ := o.decideLocked(Event{Type: EventWANUp, WANIface: "ppp0"})
+	if !deferred2 || len(filterActions(actions2, ActionStartNativeWG)) != 1 {
+		t.Errorf("настоящий WAN обязан запустить отложенный бут: %v", actions2)
+	}
+}

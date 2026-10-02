@@ -1,0 +1,104 @@
+import type { PollingStore } from './polling';
+
+/**
+ * Closed set of resource keys recognised by the invalidation pipeline.
+ * Each value MUST match the corresponding Go constant (ResourceXxx) in
+ * `internal/events/resources.go`. When adding a new state resource, update
+ * BOTH sides in the same commit — TestResourceKeys_KnownToFrontend читает
+ * этот union и падает на ключе, который бэкенд публикует, а фронт не знает.
+ */
+export type ResourceKey =
+	| 'awg3'                        // ResourceAwg3
+	| 'tunnels'                     // ResourceTunnels
+	| 'servers'                     // ResourceServers
+	| 'singbox.status'              // ResourceSingboxStatus
+	| 'singbox.tunnels'             // ResourceSingboxTunnels
+	| 'singbox.proxies'             // ResourceSingboxProxies (no backend publisher yet — invalidate via store.refetch)
+	| 'sysInfo'                     // ResourceSysInfo
+	| 'pingcheck'                   // ResourcePingcheck
+	| 'saveStatus'                  // ResourceSaveStatus
+	| 'settings'                    // ResourceSettings
+	| 'routing.dnsRoutes'           // ResourceRoutingDnsRoutes
+	| 'routing.staticRoutes'        // ResourceRoutingStaticRoutes
+	| 'routing.accessPolicies'      // ResourceRoutingAccessPolicies
+	| 'routing.policyDevices'       // ResourceRoutingPolicyDevices
+	| 'routing.policyInterfaces'    // ResourceRoutingPolicyInterfaces
+	| 'routing.clientRoutes'        // ResourceRoutingClientRoutes
+	| 'routing.tunnels'             // ResourceRoutingTunnels
+	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
+	| 'deviceproxy.config'           // ResourceDeviceProxyConfig   — also clears missing-target banner
+	| 'deviceproxy.outbounds'       // публикатора НЕТ: ключ живёт ради invalidateAll() при выходе из отказа
+	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime
+	| 'singbox.router.staging'      // emitted by emitStagingEvent — triggers loadStaging()
+	| 'singbox.router.rules'        // emitted by emitRulesEvent — triggers loadRulesSnapshot()
+	| 'proxyrt.instances'             // ResourceProxyInstances — состав инстансов прокси
+	| 'mcpKeys'                     // ResourceMcpKeys — ключи MCP-сервера
+	// Три ключа мастера Amnezia Premium: публикаторы есть, ПОДПИСЧИКОВ НЕТ
+	// СОЗНАТЕЛЬНО. Мастер — модальное окно, оно грузит и ключ, и зеркало, и
+	// каталог при открытии и перечитывает каталог само после выдачи и отзыва,
+	// так что в своей вкладке событие ничего не добавляет. Подписать каталог
+	// на PollingStore нельзя дёшево: контракт стора требует интервала опроса и
+	// перечитывает данные на возврате фокуса вкладки, а КАЖДОЕ чтение каталога
+	// — поход к порталу Amnezia (резолв зеркала → логин → account-info), то
+	// есть фоновый опрос чужого сервиса с лимитами. Цена отказа — вторая
+	// открытая вкладка мастера показывает прежний счётчик устройств до
+	// перезагрузки. Если понадобится больше, чинить надо адресной подпиской
+	// открытого мастера, а не фоновым стором.
+	| 'amneziaPremium.key'          // ResourceAmneziaPremiumKey — состояние ключа подписки Amnezia Premium
+	| 'amneziaPremium.catalog'     // ResourceAmneziaPremiumCatalog — данные подписки у портала (счётчик устройств, выданные конфигурации)
+	| 'amneziaPremium.mirror'      // ResourceAmneziaPremiumMirror — адрес зеркала Amnezia
+	| 'bypass-set';                 // публикуется после наполнения AWGM-BYPASS (storeBypassSetOutcome)
+
+/**
+ * Resource key → list of polling stores. Multiple stores can register under
+ * the same resource key (e.g. legacy deviceProxyConfig and new
+ * deviceProxyInstances both subscribe to "deviceproxy.config" invalidations).
+ * The SSE `resource:invalidated` handler iterates all registered stores and
+ * calls `.invalidate()` on each.
+ */
+const registry = new Map<string, PollingStore<unknown>[]>();
+
+/**
+ * Register a polling store under a resource key. Call this once per store,
+ * typically at store construction. Subsequent `invalidateResource(key)` calls
+ * will trigger an immediate refetch on all stores registered for that key.
+ * Typed by `ResourceKey` so typos become compile errors rather than silent
+ * invalidation misses.
+ */
+export function registerStore<T>(resource: ResourceKey, store: PollingStore<T>): void {
+	const stores = registry.get(resource) ?? [];
+	stores.push(store as PollingStore<unknown>);
+	registry.set(resource, stores);
+}
+
+/**
+ * Trigger `invalidate()` on all stores registered under `resource`. No-op if
+ * no store is registered — either because the resource key is unknown, or
+ * because the store has not been migrated to createPollingStore yet.
+ *
+ * Accepts plain `string` because this is called from the SSE listener with
+ * payload that is unknown at compile time; the no-op-on-unknown-key behaviour
+ * is intentional.
+ */
+export function invalidateResource(resource: string): void {
+	for (const store of registry.get(resource) ?? []) {
+		store.invalidate();
+	}
+}
+
+/**
+ * Invalidate every registered store. Called when the backend recovers
+ * from a full outage (Tier 3 overlay) so all polling stores pick up
+ * fresh state rather than keeping whatever cached data they had before
+ * the outage.
+ */
+export function invalidateAll(): void {
+	const seen = new Set<PollingStore<unknown>>();
+	for (const stores of registry.values()) {
+		for (const store of stores) {
+			if (seen.has(store)) continue;
+			seen.add(store);
+			store.invalidate();
+		}
+	}
+}

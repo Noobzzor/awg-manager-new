@@ -76,3 +76,18 @@ a broad tests/mocks allowlist or a completed source security gate. The
 coordinator must independently verify exact replacements, classify remaining
 scanner findings, rescan current source and the publication payload, then verify
 exact remote readback if publication is separately approved.
+
+## Accepted source bootstrap
+
+The coordinator completed these gates for source commit
+`1bd15d4b3737790e44261287e609cd62eb2dacf2`: 4067 source/doc/vendor files,
+no generated dependencies/build state or actual environment files. Final raw
+scan returned 78 findings at 66 exact reviewed locations: unchanged independently
+reviewed synthetic fixtures/public placeholders or the deterministic replacements
+above. Exact line hashes matched; no new, changed, or unreviewed alerts remained.
+No scanner exclusions were added and the raw scanner result was NOT zero.
+Targeted originals were absent from the entire payload. Remote branch, complete
+folder inventory, and all committed blob hashes were independently read back.
+This acceptance is revision-bound, not a guarantee against all possible secrets
+or permission to ignore future changes. It does not close the Gateway functional
+gate or imply that this development source is production-ready.

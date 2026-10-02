@@ -6,11 +6,15 @@
 - Цель: новая разработка только в Noobzzor/awg-manager-new/vps-gateway-next; прежние checkout и remote не меняются.
 - Facts: target repository public, main, write permission подтверждён API; исходники перенесены из текущего snapshot, а не из старого чистого commit.
 - Acceptance: исключены .git, caches, приватные конфиги и старые несанифицированные logs; secret scan; publish только новой папки; exact remote commit/tree readback.
-- Status: IN PROGRESS. Copy hashes проверены локально. Документация/лицензия опубликованы commit 4da0252482c8e4eb26d5d954fd63b6ab5e68c1e5 и прочитаны обратно. Initial scan: 80 hits / 68 unique locations / 30 files. Independent fixture review завершён, publication gate OPEN. Scoped replacement unresolved literals: 11 Go test files и один TS test; затем relevant tests, exact remaining findings review и current-source/publication-payload scan. Исходники ещё не опубликованы.
-- Verified slice: 19 replacements в 12 tests independently verified against baseline/formula, old targeted literals absent from non-generated source; шесть affected Linux packages и 30 frontend tests PASS. Current raw scan 78/66/29; exact remaining-finding/payload acceptance pending. Frontend package.json explicitly unignored для нового clean publish; node_modules остаётся ignored, lockfile unchanged. Evidence: 54-publication-fixture-sanitization.
+- Status: DONE. Source-only payload 4067 files; 19 replacements в 12 tests independently verified against baseline/formula, old targeted literals absent from the entire payload. Final raw scan 78 hits / 66 exact reviewed locations; zero new/unreviewed/changed alerts. No blanket scanner exemptions. Evidence: 54-publication-fixture-sanitization and 56-source-publication.
+- Verified slice: шесть affected Linux packages и 30 frontend tests PASS. Frontend package.json explicitly unignored; node_modules остаётся ignored, lockfile unchanged.
+
+## GH-002 — полная публикация новой папки
+- Acceptance: только vps-gateway-next в отдельном publication clone; exact remote ref/folder/blob readback.
+- Status: DONE. Source commit 1bd15d4b3737790e44261287e609cd62eb2dacf2; все 4067 committed blob hashes verified. Старый dirty snapshot/history и root repo files не публиковались и не менялись. Это source publication, не product readiness.
 
 ## POL-001 — миграция имени Gateway slot
-- Facts: KnownSlots использует 18-z-gateway-policy.json; legacy 19-gateway-policy.json Bootstrap не учитывает, а runtime MergeDir читает.
+- Original defect: KnownSlots использует 18-z-gateway-policy.json; старый Bootstrap не учитывал legacy 19-gateway-policy.json, а runtime MergeDir читал его. Миграция теперь реализована; remaining acceptance ниже.
 - Proven: active/disabled/pending layouts, конфликты old/new, идемпотентность успешного Bootstrap, validator/runtime merge regression; отказ startup при migration error и отказ directory symlinks до cleanup.
 - Not proven: partial failure/retry, полный non-regular candidate matrix, отдельный conflict MergeDir exclusion test, compatibility guards, disk/runtime convergence при живом пережившем рестарт движке.
 - Acceptance: legacy state/content не теряются; current disabled не включается; конфликт сохраняется вне live merge; повторный Bootstrap идемпотентен; после apply нет старого final/duplicate inbound; Linux RED/GREEN/package tests.

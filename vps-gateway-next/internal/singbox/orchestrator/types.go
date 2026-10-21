@@ -20,6 +20,7 @@ const (
 	SlotLocalProxy    Slot = "local-proxy"    // 05-local-proxy.json — local-mode mixed proxy
 	SlotTunnels       Slot = "tunnels"        // 10-tunnels.json
 	SlotAwg           Slot = "awg"            // 15-awg.json
+	SlotWARP          Slot = "warp"           // 16-z-warp.json
 	SlotAwg3          Slot = "awg3"           // 16-awg3.json
 	SlotDNSRewrites   Slot = "dns-rewrites"   // 17-dns-rewrites.json
 	SlotQoSRoutes     Slot = "qos-routes"     // 18-qos-routes.json
@@ -75,6 +76,7 @@ func KnownSlots() []SlotMeta {
 		{Slot: SlotTunnels, Filename: "10-tunnels.json", AlwaysOn: true},
 		{Slot: SlotAwg, Filename: "15-awg.json", AlwaysOn: true},
 		{Slot: SlotAwg3, Filename: "16-awg3.json", AlwaysOn: true},
+		{Slot: SlotWARP, Filename: "16-z-warp.json", AlwaysOn: true},
 		{Slot: SlotDNSRewrites, Filename: "17-dns-rewrites.json"},
 		// 18 merges BEFORE gateway policy on purpose: managed QoS route-options
 		// retain priority. The gateway filename then sorts before DNS route

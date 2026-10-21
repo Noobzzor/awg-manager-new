@@ -3,6 +3,7 @@ package ingress
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"sync"
 )
 
@@ -16,6 +17,9 @@ type Registry struct {
 	allocator *Allocator
 	keygen    KeyGenerator
 	clients   map[string]*Client
+	// Startup-only device profile, deliberately not part of client persistence.
+	awgParameters *AWGParameters
+	clientDNS     netip.Addr
 }
 
 func NewRegistry(allocator *Allocator, keygen KeyGenerator) *Registry {

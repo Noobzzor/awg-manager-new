@@ -47,5 +47,26 @@ func (r *Registry) RenderClientConfig(id, serverPublicKey, endpoint string) (str
 	if client.Status != StatusActive {
 		return "", fmt.Errorf("client is not active")
 	}
-	return RenderClientConfig(client, serverPublicKey, endpoint, client.Address.String()+"/32", "")
+	r.mu.RLock()
+	params := r.awgParameters
+	dns := r.clientDNS
+	r.mu.RUnlock()
+	var profile string
+	var err error
+	if params != nil {
+		profile, err = RenderAWGClientConfig(client, serverPublicKey, endpoint, client.Address.String()+"/32", "", *params)
+	} else {
+		profile, err = RenderClientConfig(client, serverPublicKey, endpoint, client.Address.String()+"/32", "")
+	}
+	if err != nil {
+		return "", err
+	}
+	if !dns.IsValid() {
+		dns = netip.MustParseAddr("1.1.1.1")
+	}
+	iface, peer, ok := strings.Cut(profile, "\n\n[Peer]\n")
+	if !ok {
+		return "", fmt.Errorf("invalid client configuration section boundary")
+	}
+	return iface + "\nDNS = " + dns.String() + "\n\n[Peer]\n" + peer, nil
 }

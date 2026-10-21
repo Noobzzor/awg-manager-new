@@ -1,12 +1,47 @@
 # Оперативный статус
 
+Latest checkpoint: **2026-10-21 iPhone DIRECT browsing confirmed; DNS export fixed and owned VPS upgraded**. RED/GREEN87 targeted tests, Linux vet/build0, clean independent review, exact-image entrypoint/API/persistence and7-phase local384MiB UDP/WARP PASS. Same VPS data/phone identity/policy retained, existing sites/database unchanged. Full Linux suite: 8488 passed leaf tests; native exit 1; FAIL: TestByInterface_LoopbackRoot, TestConfDisabled_SuppressedWhenNDMSBouncesBackToRunning. ICMP raw socket refused by cap-drop ALL runner; NDMS settle test failed and is unresolved. Neither package was changed. Full-suite PASS is NOT claimed.. User confirmation after upgrade and controlled device DIRECT/BLOCK/DIRECT, DNS/IPv6/no-bypass/WARP/full product acceptance remain OPEN. Evidence: scripts/m2-local-20261021/codex-client-dns-66ef0989. Earlier checkpoints below are historical.
+
+Latest checkpoint: **2026-10-21 first user-authorized Beget VPS START PASS; iPhone traffic PENDING**. Exact trial image healthy, real AWG interface/API ready, panel loaded via SSH, personal iPhone client/profile created. Original sites/status/content hashes and database state preserved. Current idle53.77MiB, disk~1.31GiB free. No server data/cache cleanup. No external-peer handshake yet; VPS payload/policy/WARP/device acceptance OPEN. Evidence: scripts/m2-local-20261021/codex-beget-trial-66ef0989. Earlier checkpoints below are historical.
+
+Latest checkpoint: **2026-10-21 personal trial UI/image/bundle PASS locally**. Gateway basic visibility fixed; browser create/QR/disable/enable/revoke/reload verified. Fresh exact image, normal entrypoint/API/persistence and seven-phase real AWG/WARP UDP PASS, repeated at384MiB. Portable archive/19OCI blobs/Compose verified; own cleanup/protected9containers33volumes retained. Beget read-only preflight only; first VPS/device acceptance and full product remain OPEN. Evidence: scripts/m2-local-20261021/codex-personal-trial-66ef0989. Earlier checkpoints below are historical.
+
+Latest checkpoint: **2026-10-20 packaged personal-trial image core PASS; browser Gateway visibility fix IN PROGRESS**. Normal entrypoint/API/AWG lifecycle/persistence and packaged seven-phase real UDP/WARP verified. Default basic UI hides Gateway; targeted regression RED witnessed, minimal fix and rebuilt UI pending. No final bundle/VPS acceptance.
+
+Evidence: scripts/m2-local-20261020/codex-personal-trial-66ef0989/awg-personal-trial-core-result-2026-10-20.json. Own containers/volume removed; protected9containers and33priorvolumes retained. UI changes are not yet in the verified image; previous source audit applies historically. No provider/host/VPS/Git changes.
+
+Historical checkpoint: **2026-10-20 real AWG + Cloudflare WARP UDP seven-phase PASS**. DIRECT/BLOCK/DIRECT/WARP-up/WARP-down/DIRECT-control/WARP-restored verified with actual policy TUN transit. HTTPS seven-phase PASS retained. Whole product image, browser workflow and VPS/user-device trial remain open.
+
+Evidence: scripts/m2-local-20261020/codex-udp-tun-66ef0989/awg-udp-tun-result-2026-10-20.json. Fresh Linux23/23, vet/build0, Python14/14, independent final review0 findings. BLOCK reject1/direct0; WARP outage drops3/direct0/no delivery; control and restoration deliver. Exact owned cleanup/protected9. NFQUEUE stays0; separately named acceptance mode requires actual TUNTX all7, positiveRX and correlatedDIRECT events. Legacy queue gate preserved; exact queue-skip cause not localized. No product/provider/host/VPS/Git change. Earlier checkpoints are historical.
+
+Historical checkpoint: **2026-10-20 UDP queue diagnostic complete; full UDP acceptance HOLD, path unexplained**. Real AWG DIRECT STUN response verified, legacy and structured prerouting queue counters both zero. Selector-mismatch hypothesis unconfirmed; full UDP run NOT STARTED. HTTPS seven-phase PASS retained. UDP BLOCK/WARP, whole-image UI and VPS/user-device trial remain open.
+
+Evidence: scripts/m2-local-20261020/codex-udp-counter-66ef0989/awg-udp-counter-result-2026-10-20.json. Fresh Linux Go17/17 and vet0; Python8/8; pre-runtime independent review0 Critical/Important/Minor. Diagnostic native/parent0, exact owned container absent, all9 pre-existing IDs retained. No product code/host/provider/VPS/Git changes. Next: bounded observation of actual UDP route/interception point before full BLOCK/outage/restoration; no assertion relaxation. Earlier checkpoints below retain their historical scope.
+
+Historical checkpoint: **2026-10-13 UDP STUN DIRECT reply observed; full UDP probe HOLD on queue-counter attribution**. HTTPS BLOCK/WARP-outage/restoration PASS retained. UDP BLOCK/WARP/user-device/UI/VPS remain open.
+
+- Latest Codex checkpoint 2026-10-12: REAL Cloudflare WARP standalone verified HTTPS payload PASS, directoff/WARPon/freshnonce/TLS. Existingaccount, no settingswrites/newregistration. Historical APIflagfalse did not block this connection. Wholemanager/AWG/realprovider outage/VPS stillOPEN. Evidence scripts/m2-local-20261012/codex-cloudflare-tunnel-66ef0989/awg-cloudflare-tunnel-result.json. Earlier checkpoints below are historical.
+
+- Latest Codex checkpoint 2026-10-12: real Cloudflare profile extracted and manager DecodeProfile/Store validated, encrypted private retention. Provider warp_enabled=false retained; actual tunnel/Cloudflare packets remain NOT TESTED. Existing account reused (oneGET200, no registration/mutation). Evidence scripts/m2-local-20261012/codex-cloudflare-profile-66ef0989/awg-cloudflare-profile-result.json. Next: verify activation semantics/state, then actual WARP traffic/fail-closed with same account. Earlier entries are historical.
+
+- Latest Codex checkpoint 2026-10-12: one real Cloudflare WARP registration PASS; private encrypted host readback verified; no real Cloudflare tunnel/packet acceptance yet. Evidence scripts/m2-local-20261012/codex-cloudflare-registration-66ef0989/awg-cloudflare-registration-result.json. Next: reuse that account, fetch real profile parameters and verify actual WARP traffic. Earlier checkpoint entries below retain their historical scope.
+
 - Product: полный серверный AWG Manager Gateway; PRODUCT_SPEC.md.
-- Milestone: M0 — воспроизводимая основа перед single-client DIRECT/BLOCK gate.
-- Current task: POL-001 — дополнительные migration acceptance cases; затем POL-002 rule-engine control.
+- Milestone: M1 DONE — ACCEPT_M1_WG_ONLY_PACKET_PROOF, not reopened. M2 real AWG IN PROGRESS, acceptance OPEN.
+- Current local packet probe, 2026-10-08: HOLD_M2_LOCAL_AWG_DATA_PATH; checkpoint scripts/m2-local-20261008/codex-local-packet-b15343f9-9010-4306-acaa-d21a3a652a2a/RESULT.json. Accepted standalone binary unchanged; real TUN/network-none local probe native1/OOMfalse. All11 AWG fields read back, AWG H1/H2 exchange and client handshake mark observed, but server confirmation0 and no exact ICMP echo/no configured H4 transport; full packet gate FAIL. WG-mode negative and positive2 NOT RUN. Source-backed stale-S4-before-blocking-read hypothesis unproven. Fixture validators/vet/build native0; canonical CAP_NET_ADMIN metadata correction only. Server native join/socket/TUN cleanup and six exact container absences verified; final original8 IDs retained, owned build copies removed. Prior IPC/build ACCEPT retained, M1 unchanged; no manager/UI/VPS/Git/backend changes. Early-blocker report.
+- Current verified Codex IPC/build slice, 2026-10-08: ACCEPT_M2_LOCAL_IPC_BUILD_SLICE; checkpoint scripts/m2-local-20261008/codex-ipc-build-2e7e1740-806f-4843-b7c1-fb7258a958e9/RESULT.json. Confirmed inotify-before-cancel shutdown race fixed by cancellation-first ordering; no ignored errors or weakened assertion. Fresh original behavioral RED2/10, corrected full IPC GREEN10/10 (noop child excluded), descriptor regression100/100, formatting/vet native0. Separate Linux/amd64 corrected binary BUILT, native0/OOMfalse, SHA256 333d0f224ad8bb2645add59e65061ab5b31c67c59e01344ec24d430037447a31; exact source/dependency/image pins and independent read-only review accepted. All10 disposable containers absent by receipts; final original8 IDs retained, owned build copies/caches removed. M2 handshake/traffic/product OPEN; preserved repeated-Close/partial-startup/background-join concerns remain open. M1 retained; no manager/UI/TUN/VPS/Git or service restart.
+- Historical superseded Docker-access checkpoint: HOLD_M2_CODEX_DOCKER_PIPE_ACCESS_DENIED; checkpoint scripts/m2-local-20261008/codex-ipc-preflight-f56cb709-8241-4cf1-b95f-7809a6e9c257/ACCESS_BLOCKER.json. Native read-only inventory exit1/permission denied; narrow pipe permission API unsupported. No container create, IPC tests, build or permission bypass; source hashes retained. Prior engine-unavailable stop is historical.
+- Historical superseded engine-unavailable checkpoint: HOLD_M2_CODEX_DOCKER_ENGINE_UNAVAILABLE; checkpoint scripts/m2-local-20261008/codex-ipc-preflight-f56cb709-8241-4cf1-b95f-7809a6e9c257/RESULT.json. User GO received; bounded read-only Docker preflight failed because selected desktop-linux pipe is absent. No test container created, no IPC tests or build attempted, patched binary NOT BUILT; exact durable IPC source/test hashes retained. Historical Close failure below remains unresolved. No Docker/service start/restart, environment substitution, manager/UI/TUN/VPS/Git mutations. Fresh protected inventory cannot be verified while daemon is unavailable. Early-blocker STOP.
+- Historical superseded IPC-failure checkpoint: HOLD_M2_REAL_IPC_CLOSE_FAILURE; checkpoint scripts/m2-local-20261008/f1-build-034039a7-9dc5-485f-8c07-e355fa1b9c36/RESULT.json. On explicit 2026-10-08 authorization, exact x/sys v0.36.0 source zip/mod staged in owned scratch and verified against pinned go.sum h1; containers retained network-none/cap-drop ALL/no devices/1GiB noSwap/1CPU/PID128/readonly sources. REAL selected IPC original-source RED reproduced foreign replacement deletion (2/10 meaningful cases PASS,8 FAIL); candidate passes all9 foreign-resource cases but descriptor-handoff normal Close fails (9/10 PASS,1 FAIL), native exit1/OOMfalse in both runs. Exclude no-op TestF1IPCChild helper from those counts. No compiled patched binary: build not attempted because actual IPC gate FAIL. Root cause of Close refusal not confirmed. Only scratch diagnostic assertions were augmented with error categories, not relaxed; amended diagnostic not executed (one pre-create source-manifest refusal retained, then 200-second tool-approval timeout with zero calls; no bypass/retry). Fresh exact readback: two disposable IDs absent, original eight IDs retained, no service-health claim. Two-file source patch export saved; durable historical source candidate and binaries unchanged. Early-blocker STOP; no active worker, no automatic resume. M1 accepted/not reopened, full scope retained; no manager/UI/TUN/VPS/commit/push.
+- Prior accepted local M2 scope: M2_LOCAL_UNKEYED_SEMANTIC_COMPATIBILITY_20261007.json plus M2_LOCAL_VERIFIED_BUILD_AND_CLEANUP_20261007.md. Exact pinned builds and affected cmd cleanup/composition tests accepted; separately authorized unkeyed real-AWG probe applied/read back 11 fields and was exactly cleaned up. That consumed permission and limited result do not establish the new manager's wiring, keys, handshake, payload, WG-negative-control or M2 target packet gate.
+- M1 retained (historical task, not reopened): M1_WG_NATIVE_PACKET_PROOF_ACCEPTANCE_20261006.json. Separately approved native run 05f36645-75c6-4da7-9e5b-0e442a7af45c check0/runtime0; all three WG-only packet stages PASS with exact cleanup/fingerprint. Attempt budgets consumed; no automatic runtime.
+- Latest verification: Accepted runner SHA256 c65e9ec0bdec53402a9ea18d1247121f236a43d5f2d1371d1080a31656908e91; 100 local tests/bash-n PASS and 43/43 artifact pins verified. Direct1 and restoredDirect2: client SHA/exact unique WAN source, packet path and engine awg-gateway-in/direct. BLOCK: failed client probe, healthy Sink before/after, no request hit, correlated awg-gateway-in/reject and path counters. WG handshake guard PASS. Independent final fingerprint matches initial; containers/stage absent, only original networks, PSI0/OOM0. No product/image/threshold/timeout/manual host network/site/Git history changes. Full Gateway/AWG/product/production gates remain OPEN.
 - Working directory: vps-gateway-next; код вне этой папки в прежнем snapshot не менять.
 - Target: Noobzzor/awg-manager-new, main, public. В репозиторий не попадут реальные ключи, клиентские конфиги и старые raw logs.
 
 ## PROVEN
+
+M1 independent review: ACCEPT_M1_WG_ONLY_PACKET_PROOF, no blocking findings. Parent read the exact report M1_WG_NATIVE_INDEPENDENT_REVIEW_20261006.md, verified SHA256 998e2cf46fedff6fa3f6b7ba2b215add93d6616436da72b9d4b10e182c018b3e and reverified43/43 artifact plus7/7 evidence pins. Final checkpoint M1_WG_NATIVE_INDEPENDENT_ACCEPTANCE_20261006.json. Successful raw sink/body hashes/full traces were not retained; acceptance is based on mandatory guards in the exact pinned runner and native STAGE verified, not a new packet capture or fresh remote check. No additional runtime authorization; full AWG/Internet/product/production gates remain OPEN.
 
 Исходники и vendored зависимости перенесены из текущего dirty snapshot с проверкой SHA256 копий. В новой Linux-копии проходят orchestrator, configmerge, policy, forwarding и ingress package tests. Migration regression сначала RED, затем GREEN: active/disabled/pending, конфликты и повторный Bootstrap; validator/runtime merge после apply совпадают. Папка на GitHub создана: первый commit 4da0252482c8e4eb26d5d954fd63b6ab5e68c1e5 содержит девять documentation/license files; exact branch/folder/README readback выполнен. Исторический no-product control воспроизвёл Docker --internal outside-subnet alias failure.
 
@@ -14,13 +49,49 @@
 
 ## NOT PROVEN
 
-Migration gate открыт: нужны partial-failure/retry и дополнительные safety/merge cases, а также disk/runtime convergence при пережившем manager restart движке. Живой domain sniff control не выполнен. Исправленная DIRECT fixture и reply path не доказаны. VPN/WARP/multi-client/failure/restart/remote VPS functional gates открыты. Публикация development source не является релизом или доказательством готовности Gateway.
+POL-001 migration/convergence seam принят для рассмотренного локального source/runtime scope; это не synchronous startup barrier и не устранение всех unmanaged-input hash defects. Combined validation-failure retry, atomic-writer fault injection и immutable full build attestation не выполнены. TLS metadata и domain policy через AWG/TUN пока не проверены. M1 corrected controlled-sink DIRECT/BLOCK/DIRECT and reply path now proven on first VPS, WG-only; true AWG, public Internet egress, VPN/WARP/multi-client/failure/restart and full remote VPS functional gates remain OPEN. Публикация development source не является релизом или доказательством готовности Gateway.
 
 ## Последний проверенный срез — POL-001 review fixes
+
+После явного resume независимый POL-002 повторён: реальные without/with sniff controls в network-none namespace, listener counts 2 allowed + 1 blocked / 2 allowed + 0 blocked; RED exit 1 / GREEN exit 0. Actual HTTP domain sniff и reject видны в trace; allowed ответы совпадают по SHA256. Policy/configmerge packages PASS, включая QoS/no-Router merge order. Exact runtime cleanup verified; source/binary/image hashes зафиксированы в 61-sniff-coordinator-verification. Engine сообщает missing default interface в network-none: loopback control работает, но внешнего egress этим не доказано. Непубликованный helper diff — только phase/readiness observability, без production policy/NAT/bind изменений.
 
 P1: Bootstrap error теперь возвращается из общего core constructor; portable/runtime initialization не выдаёт operator/orchestrator продюсерам, а composition останавливается до дальнейших фаз. P2: config root/disabled/pending должны быть настоящими каталогами, не symlinks; проверка идёт до startup cleanup и миграции. Обе регрессии сначала RED, затем GREEN в Linux. После исправлений проходят шесть package suites (включая cmd/awg-manager), go vet и gofmt check. Локальное versioned evidence: 53-migration-review-fixes. Это startup/filesystem evidence, не fail-closed packet или VPS proof.
 
 ## Следующий шаг
+
+Current continuation: scripts/m2-local-20261008/f1-build-034039a7-9dc5-485f-8c07-e355fa1b9c36/RESULT.json. STOP after real selected IPC normal-Close failure, not after a missing dependency. Exact dependency staging is authorized; x/sys v0.36.0 zip/mod integrity verified, no version substitution. Diagnose TestF1UAPIOpenDescriptorHandoffRetainsSocket without weakening its Close assertion or claiming a root cause from source inspection alone; amended scratch diagnostic is prepared but was not executed. Do not repeat the timed-out tool request or use an alternate tool to run it. On a permitted continuation, complete actual IPC GREEN before pinned binary build/final verification and one independent safety review. No manager wiring, UI, TUN, VPS or full packet gate authorized. Preserve M1, full product scope and all existing resource limits.
+
+Historical local acceptance: NET_001_A_FIX1_LOCAL_ACCEPTANCE_20261005.json. Previous F1/F2 HOLD and pending review checkpoints are superseded. Local acceptance alone does not admit shared-VPS execution.
+
+Authoritative checkpoint NET_001_A_HOLD_FIX1_ACTIVE_20261005.json: fix only F1/F2, verify actual final source/regression evidence, obtain narrow independent re-review. Previous pending-review checkpoint below is historical; first implementation review completed with HOLD, not acceptance.
+
+Current checkpoint: NET_001_A_COORDINATOR_VERIFIED_REVIEW_PENDING_20261005.json. Read full independent implementation report and verify exact report/source hashes before accepting LOCAL_INERT_CANDIDATE_SLICE. Implementation below has completed; prior design/dispatch statuses are historical. Actual143-test coordinator execution is local inert proof only, not a commissioned Linux/VPS runner.
+
+NET-001-A: design ACCEPT_DESIGN only for candidate producer + pure independent binding validator. Parent read full NET_001_ADMISSION_DESIGN_REVIEW_20261005.md and verified 23769 bytes / SHA256 ff15ae54455b75b81572773836404bd9558e646b3dc070ad49f949e6830e7fd1. Implementation deleg_c5edf49a owns only NEW scripts/vps_full_baseline_candidate.py and test_vps_full_baseline_candidate.py plus new local evidence. Behavioral RED/GREEN and preserved108-test regression required; no code acceptance yet. Stage owner/recovery remains a separate blocker, not implemented by this tracer. Candidate/binding validator never creates reviewer trust or admission and never unlocks CLI load. Next real stages remain network-none → attributed bridge → AWG DIRECT/BLOCK/DIRECT, with independent admission first.
+
+Final cycle2 result: ACCEPT_LIMITED_LOCAL_FIX_SLICE. Full independent report INDEPENDENT_RUNNER_CYCLE2_FINAL_REVIEW_20261005.md read; coordinator verified actual report SHA256 9952f872e02858eaa4ea5c32836b26e8ee604891f284a0728585b1305d489c62 (15512 bytes) and exact unchanged final controller/test hashes. Independent 108 tests PASS plus 14 inert scenarios confirm C2.a/C2.b closure; prior L1-L5/C1 limited-local acceptance retained. No remaining concrete local fix blockers. Acceptance checkpoint: 70-vps-no-product-control/COORDINATOR_CYCLE2_LIMITED_LOCAL_ACCEPTANCE_20261005.json. Next separate milestone is concrete full-baseline/runtime producers and independent admission, not automatic CLI unlock. NET-001 actual runtime remains HOLD; Gateway functional gate OPEN. No VPS/source/Git mutations. Pending-review checkpoints below are superseded.
+
+## История checkpoints — не текущие задания
+
+All entries below retain the status at their observation time. Any pending review/fix is superseded by the final acceptance above; these entries do not authorize resuming old work.
+
+Historical checkpoint: 70-vps-no-product-control/COORDINATOR_CYCLE2_VERIFIED_FINAL_REVIEW_PENDING_20261005.json. Controller SHA256 0d7563726f36b9b7b4522fb56bf52935f1993f2a97f983bf38cfbed29ab1c1ca, tests 8a1fcb8028e0f1b973ccab3e8383959a886428138da308dfc831af6244fd65fc; coordinator108 tests verified. Final review was pending then; now accepted above. No universal filesystem/power-loss guarantee: retained ledger.next/explicit inability to persist UNKNOWN stay honest.
+
+Latest checkpoint: 70-vps-no-product-control/CYCLE1_PARTIAL_ACCEPT_C2_FINAL_FIX_PENDING_20261005.json. Cycle1 report SHA256 b4545400efb0c4a669429ea82730bb3ff25d62bf86f02da56a2626031028cc05 verified. Final cycle2 deleg_e7aaaf7c targets only sticky durability UNKNOWN/CLEAN/reuse through real Ledger.save/evidence and cleanup/error/B2 paths; bounded best-effort exact-ID removal must continue. Next coordinator regression/readback and independent final review. Maximum two fix cycles: remaining substantive blockers then require escalation, not an automatic third loop. Runtime/remote execution remains HOLD; older checkpoints below are historical.
+
+Latest cycle1 checkpoint: 70-vps-no-product-control/COORDINATOR_CYCLE1_VERIFIED_REREVIEW_PENDING_20261005.json. Fixed controller SHA256 b51db852d2ebd83821155c3b6eebc596e658aa1651c57671a6fb975741350d5d and tests b0522f0311ea21794abf0804ad7322d51784af96f19b1d406339de83aa0632e4; actual coordinator 102-test regression PASS, accepted helper unchanged. New independent read-only re-review deleg_6f87b09c pending: accept only reviewed local fix slice, or apply only concrete remaining findings in maximum cycle2. Unknown automatic-rule templates/real host mappings remain blocked, not silently allowed. Runtime producers/full independent baseline still incomplete and remote execution HOLD. Older checkpoints below describe earlier observations.
+
+Latest checkpoint: 70-vps-no-product-control/HELPER_ACCEPTANCE_AND_RUNNER_FIX_CYCLE1_20261005.json. New helper archive SHA256 1825de4ab77b00e878d2ec2b9c8f95ce2947b384805363f2d6535fdc31f286d8, 94007429 bytes independently ACCEPTED OFFLINE ONLY: actual graph/blobs/diffids, single helper ELF, seven unchanged original layers, cached pinned source and original/parent lineage verified. Exact independent reports read and rehashed; controller HOLD L1-L5 and C1/C2 remains. Fix cycle1 deleg_be75888e limited to controller/tests; next actual regression/readback and independent re-review. Non-atomic publication pair/universal hostile importer/full signed attestation/partial behavioral-RED limits stay explicit. No remote changes or production networking workaround; commit/push forbidden. Older checkpoints below are historical, not current work instructions.
+
+Current checkpoint, 2026-10-04: 69-vps-docker-install/INSTALLATION_ACCEPTANCE_20261004_210741.json, verified against the actual POSTINSTALL_R3 file SHA256 and its service/config/HTTP/binary/cleanup fields. Docker installed and pinned candidate loaded on the first specifically authorized shared VPS; network-none checksum exit0, exact container removed, final inventory empty. Sites/services retained their preinstall identities/configs/root responses at that observation time. Authorized persistent docker0/forwarding/FORWARD/NAT effects remain. No AWG/product process or disposable bridge tested. Next contract: 70-vps-no-product-control/PROPOSED_RUNBOOK_20261004_213721.md; independent read-only review deleg_34cb9cdc pending. Tool capabilities and fresh host baseline must be checked before fixture; actual runnable harness requires tests/review. A local read-only Docker inspect now fails because Desktop engine is unavailable; no restart performed. Commit/push forbidden. Earlier paragraphs describe historical observations, not current prohibitions on the specifically authorized first-VPS preparation.
+
+Current checkpoint: 66-post-reboot-build-preflight/RESUME_AFTER_ACCEPTED_REVIEW.json. Narrow production change invalidates the persisted skip hash before active legacy mutation and preserves HasTun; completed read-only review accepted it and the pinned actual-manager HTTP-proxy/mixed-inbound loopback restart comparison. Four affected package suites PASS; preserved final-vet.log records exit0 but lacks command/target list, so its exact scope is not attested. Focused invalidation tests independently repeated. No further production fix requested by review. Next is NET-001: obtain an authorized valid actual Docker-host rule export method before any disposable bridge; no silent diagnostics collection/namespace privilege expansion. No AWG/TUN/packet/VPS acceptance or immutable full-build attestation claimed. Commit/push forbidden. Older paragraphs below are historical checkpoints, not current execution instructions.
+
+Актуальный срез: 66-post-reboot-build-preflight/RESTART_OBSERVATION_FOR_REVIEW.json. Исходный INFO run: /readyz200, actual historical cmd/awg-manager M1 и current M2 — разные OS processes; engine PID/start/exe переживает проверенный M1 SIGKILL и остаётся тем же; allowed loopback controls отвечают, current disabled сохранён, legacy исключён из actual MergeDir, applied hash равен, target всё ещё denied/no sink hit. Это наблюдение runtime divergence, передано на независимый review, не закрытие POL-001. Explicit reject debug trace в этом run не получен. Поздние debug diagnostic runs (503/missing default interface/missing applied breadcrumb) — setup failures, НЕ behavioral RED; не смешивать их с INFO evidence. Все одноразовые runtime IDs удалены с readback, bounded source builder остаётся только с own mounts/network-none/1536MiB/2CPU/normal1800s timer. Production code не менялся; добавлен только standalone test helper. Fresh frontend build прошёл с существующими warnings после двух ограниченных Node heap failures; это build, не GUI acceptance. Commit/push запрещены.
+
+Read-only review 64-surviving-engine-review/REPORT.md выявил проверяемый кандидат: current disabled + legacy active может менять actual merge при неизменном registered-slot hash; skip способен сохранить старый runtime BLOCK. Это ещё НЕ runtime RED и production fix не вносился. В прежнем snapshot действительно доступны новый slot catalog и Bootstrap без Gateway migration: исторический manager можно собрать без выдуманной baseline-реализации. Сборка baseline пока не завершена (недостающие embedded/nested-module inputs исправлены, ещё нужны исходные non-Go vendor/assembly inputs); current manager build не запускался, binaries не получены.
+
+Во время сборки Docker exec вернул API500; exact owned Go runner e3a74ab05f58c851b689178780c12c35434dfad711ae16b7fe39962cb9c5a3f7 затем оказался exited255, OOMKilled=false. Это НЕ штатное истечение sleep1800; этот abnormal exit не перезапускался. У четырёх рабочих контейнеров изменился StartedAt, images не изменились; последняя health-сверка: четыре healthy, один starting. Поэтому прежнее «working containers unchanged» относится только к более раннему срезу. Причина общего runtime изменения неизвестна; coordinator не выполнял restart Docker/working containers. Новые сборки/resources/traffic остановлены. Private checkpoint: 65-surviving-engine-build/RESUME.json; сначала установить состояние среды, не трогая защищённые resources. Commit/push запрещены.
 
 Повторный review подтвердил P1 startup fix, но нашёл pre-Bootstrap side effects и cleanup regression. Early preflight теперь выполняется до NewOperator/reconciliation и legacy migrations. Production runtime/local regression с root/disabled/pending symlinks и JSON, требующим URL-миграции: RED -> GREEN, внешние bytes/file set не меняются. Cleanup regression исправлена: ошибка доходит до one-shot/main, недоступный sing-box cleaner не используется, независимые этапы продолжаются и ошибки собираются. Координатор прочитал реализацию и повторил consolidated Linux verification: 13 package suites PASS, internal/cleanup компилируется без standalone tests; vet всех 14 targets PASS. Evidence 55-production-preflight-cleanup. Настоящий uninstall/router cleanup не запускался; при неудачной инициализации sing-box может остаться, теперь это incomplete cleanup, не успех.
 
@@ -28,8 +99,161 @@ Migration extended acceptance/fix wave при необходимости -> POL-
 
 ## Чего не делать
 
+Последнее разрешение пользователя: допустима одна owned disposable Docker network и test containers, включая только автоматически создаваемые/удаляемые Docker служебные правила. Перед запуском нужны минимальный baseline и проверяемое удаление именно network/rules; вручную host firewall, global Docker, существующие resources и VPS не менять. Commit/push теперь запрещены до новой команды. Новая сеть ещё не создавалась: readback actual Docker-host rules требует отдельного подтверждения метода; видимый docker-desktop WSL namespace не содержит существующих Docker bridges. Five working-container baseline зафиксирован (healthy). Read-only investigations: 63-disposable-network-preflight и 64-surviving-engine-review.
+
 Не перезапускать проект с нуля, не сокращать продукт, не менять VPS/host firewall/protected containers/volumes, не вносить SNAT/bind workaround ради стенда, не публиковать грязную старую историю и credentials. Разрешение на publish относится только к новой папке в выбранном repo.
 
 ## Review
 
 Независимый review нужен после consolidation POL-001/POL-002 и до новой datapath topology/gate. Не делать формальный review каждой мелочи. REVIEW не означает DONE.
+
+
+## Codex local transport checkpoint 2026-10-08T19:56:32.648852+00:00
+
+PASS_LOCAL_PACKET_WITH_FULL_SUITE_HOLD: first-packet S4 startup bug reproduced and candidate local packet sequence passed. General suite setup blocked by exact test dependency inputs; candidate not promoted. Prior accepted IPC/build retained. Evidence: scripts/m2-local-20261008/codex-local-transport-5a476159-91c9-48b8-843f-193858d1fd10/STATUS.md. No manager/UI/VPS changes.
+
+
+## Codex local suite checkpoint 2026-10-08T20:08:55.852333+00:00
+
+HOLD_EXTERNAL_OUTLINE_INTEGRATION_TEST: exact dependency archives26, CGO0 device/IPC tests pass but Outline build fails; CGO1 full suite native1. Candidate unchanged and not installed in product. Evidence scripts/m2-local-20261008/codex-local-suite-13ff66d9-1a04-4d13-8e2d-74c0c1c7d168/STATUS.md. No manager/UI/VPS scope.
+
+
+## Codex local Outline checkpoint 2026-10-08T23:24:10.609829+00:00
+
+HOLD_LOCAL_OUTLINE_FIXTURE_BUILD_TIMEOUT: fixture tests3 passed in partial native log, full pipeline timed out360s; vet/build not confirmed, helper absent, TCP protocol probe NOT_RUN. Warm caches hash-archived; all disposable resources cleaned. Prior AWG packet proof retained. Evidence scripts/m2-local-20261009/codex-local-outline-3045e330-8de4-497f-b424-4103d630a888/STATUS.md. No product/VPS changes.
+
+
+## Codex local Outline success 2026-10-08T23:44:34.010608+00:00
+
+PASS_LOCAL_OUTLINE_FALLBACK_TCP_OVER_AWG: native vet/build/packet0, exact TCP echo true→false→true, server/wire proof, independent bounded review accepted. Original external Outline test and smart selector/DNS not accepted. Product manager/UI/VPS gate remains open. Evidence scripts/m2-local-20261009/codex-local-outline-success-683e1abe-0c11-429d-875a-445bf4ffe87a/STATUS.md.
+
+
+## Codex local manager startup 2026-10-09T00:15:19.062427+00:00
+
+PASS_BOUNDED_MANAGER_STARTUP_WITH_BUILD_HOLD: explicit backend/profile admission, owned cleanup before semantic preflight/identity, shared client export profile. Startup RED4/GREEN4, JSON RED/GREEN; earlier regression/vet302 native0, unchanged production; final restored package PASS304 in partial native Go JSON. Combined final tests/vet/build timeout180, manager binary NOT_BUILT; independent bounded source review no remaining important findings. Manager packet/peer-status lifecycle, product image/UI/VPS gates OPEN. Evidence: scripts/m2-local-20261009/codex-manager-startup-66ef0989-4140-4902-beac-2b9f0a3ca7c0/STATUS.md.
+
+
+## Codex AWG owned client control 2026-10-09T00:47:38.266954+00:00
+
+PASS_OWNED_AWG_REGISTRY_CONTROL_ONLY: manager build resumed native0, peer owner guarded lifecycle and streaming public status; full affected tests316/vet/build0, actual Registry presence true/false/true/false with real AWG/tool, formatted realcontrol+vet0. Independent bounded review accepted. Only exact IP-address/up commands injected: no full-app/HTTP/addressing/routing/packet/UI/VPS acceptance. Exact own cleanup+baseline8 retained. Evidence: scripts/m2-local-20261009/codex-owned-client-control-66ef0989/STATUS.md. Prior manager build HOLD superseded for this local binary; product image gate remains OPEN.
+
+
+## Codex manager-owned AWG packets — 2026-10-09
+
+PASS_MANAGER_OWNER_REGISTRY_AWG_PACKETS: real address/UP/connected return route with no injected IP commands; fresh encrypted ICMP echo active/disabled/enabled/revoked true/false/true/false; public status/counters and AWG wire observed, actual child/socket/TUN cleanup and baseline8 verified. Formatted two-package tests318 and vet native0; independent bounded review accepted. Fixture GLIBC mismatch corrected without production behavior changes. Two explicitly gated real integration tests added. Full-app HTTP, policy/forwarding/recovery, product image/panel, real device/VPS remain OPEN. Approved personal-first scope: shared rules for own devices; advanced groups/links/expiry deferred, not removed. Evidence scripts/m2-local-20261009/codex-manager-packets-66ef0989/STATUS.md.
+
+
+## Codex full executable HTTP AWG lifecycle — 2026-10-09
+
+PASS_FULL_APP_HTTP_AWG_LIFECYCLE: Linux manager with embedded existing frontend built native0; actual application/AWG/sing-box readiness and HTTP create/config/disable/enable/revoke, public peers true/false/true/false. Normal actual process restart preserves server identity and revoked device, profile denied409 with exact error and no config. Helper review gaps RED3/GREEN3, helper vet/build0, final full-app native0, mandatory graceful/socket/TUN cleanup and exact disposable-ID removal, baseline8 retained. Production Go code unchanged. Runtime image is fixture only, network-none/WAN lo; GUI, packets through HTTP-created device, shared policy/forwarding, crash recovery/backup, product image/device/VPS gates remain OPEN. Evidence scripts/m2-local-20261009/codex-full-app-http-66ef0989/STATUS.md.
+
+
+## Codex full-app shared policy TCP — 2026-10-09
+
+PASS_FULL_APP_SHARED_POLICY_TCP: HTTP-created device, actual AWG and sing-box/nft, DIRECT→BLOCK→DIRECT fresh TCP true/false/true and sink1/0/1; exact applied hash/readiness, fresh handshake/RX, connection-correlated engine rejection. Helper review fixes RED/GREEN, final tests4/vet/build0/native0. AWG1/sing-box4 child identities exited, all owned TUN/socket/sink/container cleanup and baseline8 retained. Production Go unchanged. Controlled virtual remote in network-none fixture, not external/device/VPS acceptance. Full remaining gates and deferred native-receipt provenance minor listed in scripts/m2-local-20261009/codex-full-app-policy-66ef0989/STATUS.md.
+
+
+## Codex target IP/port/TCP/UDP policy — 2026-10-09
+
+PASS_LOCAL_TARGET_TCP_UDP: actual full app/AWG/shared rule, TCP12 + UDP16 requests with two-IP/two-port controls, TCP-rule exclusion on UDP and restoration after disabling. Fresh authenticated handshakes/RX; UDP kernel ingress; exact engine rejection mandatory and retained separately from nft. Independent review Important attribution gap fixed RED/GREEN in one pass, final tests/vet/build/runtime0. Source/helper/artifact pins enforced and included in native receipts. All owned cleanup verified; baseline8 retained. Production unchanged. Evidence: scripts/m2-local-20261009/codex-target-udp-policy-66ef0989/STATUS.md. DNS/domain/fail-closed/VPN/WARP/product image/real-device/VPS remain open.
+
+
+## Codex DNS interception / domain HTTP Host — 2026-10-09
+
+PASS_LOCAL_DNS_AND_DOMAIN_HTTP: two ordinary/nonstandard-port UDP DNS AWG probes redirected to settings-selected bootstrap resolver; exact nonce response and resolver receipt, fresh authenticated HS/RX/kernel ingress/new hijack log and exact slots/hash/readiness. Six HTTP Host requests at one IP/port: selected suffix BLOCK only while enabled, other suffix passes, disable restores. Same-connection sniffed Host/domain rule/rejected close retained. Test/vet/build/runtime0, independent review and cleanup evidence at scripts/m2-local-20261009/codex-dns-domain-66ef0989. Source/helper/binary provenance enforced; all own cleanup/baseline8. Production unchanged. DoH/DoT/TLS/QUIC/DNS-derived-IP/default-BLOCK fail-closed/VPN/WARP/product image/real-device/VPS remain open.
+
+
+## Codex hung policy-engine no-bypass — 2026-10-09
+
+PASS_FULL_APP_HUNG_ENGINE_NO_BYPASS: six real-AWG TCP/UDP before/frozen/restored requests; delivery1/1→0/0→1/1. Exact owned PID/start T-state through both outage requests, fresh handshake/RX/kernel ingress, unchanged gateway firewall and independent remote sink alive. Mandatory process/TUN/socket/container cleanup and baseline8. Helper RED/GREEN, test/vet/build/native0, review/provenance at scripts/m2-local-20261009/codex-engine-outage-66ef0989. Production unchanged. Known issue: /readyz reports ready during frozen engine; responsiveness gate next. No crash/selected-exit/general fail-closed acceptance.
+
+
+## Codex responsive readiness — 2026-10-09
+
+Active readyz now requires bounded valid local engine response; real AWG freeze/resume200→503 unresponsive→200.774 tests/vet/build0; native six TCP/UDP phases1/1→0/0→1/1,2 queued deliveries only after resume. Exactly4 product/test files promoted; source/artifact hashes, final review and cleanup8 in scripts/m2-local-20261009/codex-responsive-readiness-66ef0989. Running supervision and healthz unchanged. No general fail-closed/crash/selected-exit/product-image/device/VPS acceptance. Next crash/removal and VPN/WARP exits, then personal panel/image/device trial.
+
+
+## Codex killed-engine packet gate — 2026-10-10 Moscow
+
+PASS_FULL_APP_KILLED_ENGINE_NO_BYPASS. Real full-app AWG TCP/UDP healthy1/1→SIGKILL absent0/0. Exact PID/start kill, all-engine absence boundary snapshots,503not_running, fresh HS/RX/kernel ingress, unchanged firewall, independent receiver and synchronized history no outage nonce. Review Important absence-read-error gap RED→GREEN, final6 tests/vet/build0 and matching native rerun; exact owned cleanup/baseline8. Product source unchanged. Evidence scripts/m2-local-20261010/codex-engine-crash-66ef0989. Automatic recovery and selected-exit/general fail-closed acceptance still open.
+
+
+## Codex automatic policy-engine recovery — 2026-10-10 Moscow
+
+Actual full app/AWG healthy TCP/UDP1/1→SIGKILL absent0/0→stock watchdog replacement1/1. Readiness200→503→200, new PID/start stable, old identity gone and identical applied shared DIRECT hash. Fresh HS/RX/ingress/firewallSHA, synchronized receiver histories, provenance/helper tests/vet/build/native0, exact own cleanup/baseline8. Product unchanged. Evidence scripts/m2-local-20261010/codex-engine-recovery-66ef0989. No selected-exit/whole-app-crash/general fail-closed/device/VPS acceptance. Next VPN/WARP exits.
+
+
+## Codex selected AWG VPN exit — 2026-10-10 Moscow
+
+Actual full-app HTTP selected AWG endpoint with distinct VPN/DIRECT nonce receivers:10 fresh TCP/UDP phases DIRECT1/1→VPN1/1→exit Down0/0→exit UpVPN1/1→explicitDIRECT1/1. Same selected policy hash across outage, upstream RX/HS, fresh ingress HS/RX/inner ingress, stable engine/nft, full receiver histories no outage nonce. Helper tests/vet/build/native/provenance/final review and own cleanup/protected8. Product unchanged. Evidence scripts/m2-local-20261010/codex-selected-vpn-66ef0989. NOT Cloudflare WARP/external-provider/GUI/product-image/device/VPS acceptance. Current WARP compiler helper remains unwired in product runtime; next WARP provider integration.
+
+
+## Codex WARP profile/store foundation — 2026-10-11 Moscow
+
+PASS_LOCAL_WARP_PROFILE_ENCRYPTED_STORE. Four new package files promoted after final review. 320 unique Linux leaf tests across warp/storage, vet/build0, CGO1 warp race tests0. Strict profile import, encrypted actual DeviceCipher persistence, safe projection, key loss/corruption refusal, failed-write retention and single-Store concurrency. Cleanup/protected8/source pins verified. NO WARP endpoint generation/orchestrator/runtime/HTTP/Cloudflare/device/VPS acceptance.
+ Evidence scripts/m2-local-20261011/codex-warp-foundation-66ef0989.
+
+
+## Codex WARP runtime — 2026-10-11
+
+PASS_LOCAL_WARP_RUNTIME_STARTUP_CONFIG. Exact13-file delta promoted. Linux551 leaf tests, vet/build0; actual renderer output accepted pinned sing-box1.14.0-awgm.16. Encrypted profile restored at startup; absent/invalid/stale WARP rejected without DIRECT fallback; runtime configs newly written/replaced0600. No HTTP/panel/Cloudflare/actual WARP packet acceptance. Protected8 retained, owned containers removed, owned accidental volume removed.
+ Evidence scripts/m2-local-20261011/codex-warp-runtime-66ef0989.
+
+
+## Codex WARP import — 2026-10-12
+
+PASS_LOCAL_WARP_IMPORT_CONFIG_TRANSACTION. Exact8-file delta promoted; original7-file review Important fixed by executor RED/GREEN (no re-review). Linux955 unique leaf tests, vet/build0. GET /api/gateway/warp secret-free projection; POST /api/gateway/warp/import strict <=64KiB profile, preflight validation, encrypted persistence before validated slot commit, exact-envelope rollback, strict rollback-directory fsync and rollback-failure poison. Existing admin auth configuration; auth-enabled unauthenticated401 before dispatch and valid bearer access verified. Real filesystem/orchestrator rejection preserves slot+encrypted envelope; real backend HTTP import restored by startup helper. No synchronous engine apply/Cloudflare/actual packet/UI/VPS/product E2E/race acceptance. Protected8 retained, owned containers removed; bounded existing cache trimmed, no new cache.
+ Evidence scripts/m2-local-20261012/codex-warp-import-66ef0989.
+
+
+## Controlled WARP packet gate — 2026-10-12
+
+PASS_FULL_APP_CONTROLLED_WARP_NO_DIRECT_FALLBACK. Actual accepted full-app/AWG ingress -> HTTP WARP import -> selected shared WARP policy -> controlled authenticated/decrypted WG-compatible exit.10 fresh TCP/UDP probes DIRECT -> WARP Up -> WARP Down -> restored WARP -> explicit DIRECT; distinct receipts/direct0 on WARP and outage, crypto RX/HS, expected nonzero reserved receive delta/no mismatches. Exact hash/readiness/stable engine/nft and receiver snapshots; no outage nonces through final snapshots. Product source unchanged. No Cloudflare/controlplane/real-provider/infinite-queue/reconnect-SLA/device/UI/VPS/general failclosed acceptance. Reserved adapter explicitly emulates header normalization [0,127,255]; peerkeepalive1s/product25s. Helpertests6/vet/build/native0; source/artifact/client pins and own cleanup/baseline8.
+ Evidence scripts/m2-local-20261012/codex-controlled-warp-66ef0989.
+
+
+## Cloudflare profile preparation — 2026-10-12
+
+READY_FOR_CLOUDFLARE_CONSENT_PREPARATION_ONLY. No real Cloudflare connection/registration or product change. wgcf2.3.1 release SHA verified, network-none help/buildinfo native0; protected8 retained, exact owned containers removed. Operator must obtain explicit user consent before accepting terms/external registration. Need private encrypted credential retention/converter prepared+tested BEFORE external call; one registration max after preparation. Budget next30min, no host/VPS changes.
+ Evidence scripts/m2-local-20261012/codex-cloudflare-preparation-66ef0989.
+
+
+## Codex 2026-10-12 — Cloudflare registration checkpoint
+
+PASS_SINGLE_CLOUDFLARE_WARP_REGISTRATION_PRIVATE_RETENTION: explicit one-account consent, exactly1 attempt, native0, encrypted host readback aftercleanup. Linux8/8 + capture4/4, vet/build0; reviewImportant2 fixed RED→GREEN, Minor1 deferred (bounded ciphertextreadback). Protected8 retained; no product/VPS/host/Git changes. Evidence scripts/m2-local-20261012/codex-cloudflare-registration-66ef0989/awg-cloudflare-registration-result.json. Next reuse existing account (NO new registration), retrieve actual reserved/endpoint/address/peer data and test actualCloudflare WARP packets/fail-closed. Registration PASS; profile/tunnel/Cloudflare packet/VPS NOT TESTED.
+
+
+## Codex 2026-10-12 — real Cloudflare profile checkpoint
+
+PASS_REAL_CLOUDFLARE_PROFILE_EXTRACTION_MANAGER_VALIDATION_WARP_INACTIVE: one authenticated verifiedTLS GET200, existing account, zero registrations/mutations. Actual reserved/key/IPv4/port extracted, encrypted host readback and real manager DecodeProfile/Store roundtrip validated native0; Python22/Linuxhelper2/vet/build0. Cloudflare warp_enabled=false retained; candidate NOT applied, actualCloudflarepackets/VPS NOT TESTED. Review prefetch0Critical/0Important/2Minor deferred; two postfetch compatibility fixes executorRED/GREEN, no second review. Protected8 retained. Next activation semantics and actualtunnel with existing account, no new registration. Evidence scripts/m2-local-20261012/codex-cloudflare-profile-66ef0989/awg-cloudflare-profile-result.json.
+
+
+## Codex 2026-10-12 — actual Cloudflare WARP payload checkpoint
+
+PASS_REAL_CLOUDFLARE_WARP_STANDALONE_TLS_PAYLOAD: one realstarted attempt, parent/native0, freshnonce and verifiedTLS direct warp=off / forcedWARP warp=on. Exact product RenderEndpoint+pinnedengine; sameaccount/profile, zero registrations/settingswrites. Historical APIwarp_enabled=false is not tunnelhealth proof, separateactivation not required in this run. Linux6/vet/build0, freshreview0Critical/0Important/2Minor deferred; narrow postreview data-tmpfs admissionfix verifiednative, no secondreview. Exactcontainer/privateTmp/enginecleanup/protected8 and exactnewunusedvolume cleanup verified. WholeAWGmanagerrealCF/UDP/outage/recovery/VPS OPEN. Next wholemanager→AWG→realWARP proof using existingaccount, then noDIRECToutage/recovery. Evidence scripts/m2-local-20261012/codex-cloudflare-tunnel-66ef0989/awg-cloudflare-tunnel-result.json.
+
+## 2026-10-13 — real manager/AWG/Cloudflare WARP HTTPS chain
+
+PASS_FULL_MANAGER_AWG_REAL_CLOUDFLARE_DIRECT_WARP_DIRECT. Exact accepted application binary: HTTP device creation/config export, existing real WARP profile import and exact endpoint slot, shared policy API apply. Actual AWG netstack client verified HTTPS TLS and fresh nonce through DIRECT/off → WARP/on → DIRECT/off. Each phase: fresh server AWG handshake, RX and kernel ingress deltas, stable applied policy/engine/firewall. One bounded runtime, native/parent exit 0; app/children/socket/TUN cleanup and exact owned Docker removal verified, protected 8 retained. No new registration/provider settings mutation. Manager 3/3 + client 2/2 tests, vet/build 0. Fresh review Important3 fixed in one RED/GREEN pass, wrapper 4/4; no second review. Public evidence allowlisted, no raw runtime streams.
+
+Evidence: scripts/m2-local-20261013/codex-real-warp-chain-66ef0989/AWG-REAL-WARP-CHAIN-REPORT-2026-10-13.md. BLOCK, actual provider outage without DIRECT fallback, restoration, UDP and user-device/UI/VPS remain unaccepted. Next bounded task: real-chain BLOCK and WARP outage/restoration. Whole product scope retained; no product source/binary promotion this slice.
+
+## 2026-10-13 — real BLOCK/outage probe early HOLD
+
+HOLD_REAL_AWG_BLOCK_CLIENT_FAILURE_CLASSIFICATION. Prior real HTTPS DIRECT/WARP/DIRECT PASS retained. One new actual runtime: DIRECT TLS/nonce/off verified; BLOCK applied with fresh AWG handshake/RX2036/ingress3 and one target/source/connection-correlated engine rejection, no delivery. Client setup/attempt true but TransportFailed=false; strict negative gate refused, BLOCK not accepted. WARP outage/restoration phases NOT REACHED. Native/parent1/OOMfalse. App child/socket/TUN cleanup, exact Docker absence and protected8 retention verified; no new registration/provider settings writes/host/VPS/Git mutations. Manager9/9, client3/3, wrapper4/4, vet/build0. Review Important2 fixed one RED/GREEN pass; Minor stale private scope description deferred. Public evidence: scripts/m2-local-20261013/codex-real-warp-fail-66ef0989/AWG-REAL-WARP-FAIL-REPORT-2026-10-13.md.
+
+Next: offline diagnose safe client error classification for gVisor wrapped TCP errors (plain-string conversion source-backed hypothesis; actual error unknown); preserve certificate/trace false-failure rejection. Then new bounded BLOCK/outage/restoration probe, no blind retries. Product scope unchanged; product binary/source not promoted by this test-only slice.
+
+## 2026-10-13 — real AWG/WARP HTTPS BLOCK/outage/restoration PASS
+
+PASS_REAL_AWG_WARP_BLOCK_OUTAGE_RESTORE_HTTPS. Seven native phases: DIRECT/off → BLOCK/reset/no delivery → DIRECT/off → WARP/on → WARP-down/timeout/no delivery → DIRECT-control/off under same provider drop → WARP-restored/on. Every phase has live fresh AWG handshake/RX/kernel ingress and stable applied policy/engine/firewall. BLOCK target/source/connection-correlated engine reject1. WARP-down exact provider endpoint UDP drop5, direct TCP443 target packets0; successful DIRECT control proves other Internet availability. Positive phases verify TLS and fresh nonce. Original accepted manager binary/profile HTTP import retained; exact real WARP slot verified.
+
+Prior HOLD closed by known gVisor TCP error classification, reproduced on actual in-memory closed port RED→GREEN. Unknown/TLS errors remain refused; only allowlisted categories retained. Client6/6, manager10/10, wrapper5/5; Linux vet/build0. Fresh independent review Critical0 Important0/no new Minor; historical private scope wording deferred. Single runtime native/parent0/OOMfalse. Actual outage table/app/children/socket/TUN cleanup and exact Docker absence/protected8 verified. No new registration/provider settings mutation/host/VPS/Git changes, no product source/binary promotion. Evidence: scripts/m2-local-20261013/codex-real-warp-class-66ef0989/AWG-REAL-WARP-CLASS-REPORT-2026-10-13.md.
+
+DONE only for bounded single-IPv4 HTTPS/TCP fail-closed proof; not whole M2/product acceptance. NEXT: real-chain UDP payload and refusal/restoration; user-device/full UI/VPS acceptance remain open. Full product scope preserved. Prior HOLD and positive results below/above remain historical evidence.
+
+## 2026-10-13 — real UDP STUN early HOLD on queue-counter attribution
+
+HOLD_REAL_AWG_UDP_QUEUE_COUNTER_ATTRIBUTION. First DIRECT phase produced actual connected UDP STUN reply with correct fresh transaction/strict parsing, fresh AWG handshake/RX308/kernel ingress2, Sent2/direct UDP3478 packets2, stable policy/engine/firewall. QueueDelta0 violates current strict NFQUEUE gate. Native/parent1/OOMfalse; complete UDP acceptance refused. UDP BLOCK/WARP-up/outage/no-DIRECT/restoration NOT REACHED. No product-path failure inference: exact counter applicability/attribution unresolved; helper selects first global queue regex without family/table/chain. Next bounded task: diagnose relevant forwarded AWG UDP counters, reproduce selector/applicability problem, RED/GREEN fix; do not simply drop requirement.
+
+Prior HTTPS BLOCK/WARP-outage/restoration PASS retained. STUN tests3/3 + inherited HTTPS6/6 cached, manager14/14, wrapper4/4, Linux vet/build0; observed RED before implementation. Fresh review Critical0 Important0, Minor stale private scope string deferred. Single runtime, actual monitor table/app/children/socket/TUN cleanup, exact Docker absence/protected8 retained. No registration/settings/host/VPS/Git/product-source/binary changes. Evidence: scripts/m2-local-20261013/codex-real-warp-udp-66ef0989/AWG-REAL-WARP-UDP-REPORT-2026-10-13.md. Public mapped addresses/raw runtime logs not retained. Scope single IPv4 STUN transport reply, not crypto service identity/general UDP/full product/user-device/UI/VPS acceptance. Full product scope unchanged.

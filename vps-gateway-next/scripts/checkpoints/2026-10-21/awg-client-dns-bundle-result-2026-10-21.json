@@ -1,0 +1,12 @@
+{
+  "status": "PASS_EXPORTED_TRIAL_BUNDLE",
+  "image_id": "sha256:2178524bc069afd4aa2c5b639e6acb73154f96a24247db07c33d685fa0b89929",
+  "files_checked": 8,
+  "compressed_bytes": 115529126,
+  "archive_sha256": "e519b15ab59f6b4e8aab2e71fbce41f6d64984932889783bcef3416748a6c4bf",
+  "archive_manifest_matches_image": true,
+  "oci_index_and_all_blob_digests_verified": 19,
+  "compose_configuration_valid": true,
+  "panel_loopback_only": true,
+  "vps_started": false
+}

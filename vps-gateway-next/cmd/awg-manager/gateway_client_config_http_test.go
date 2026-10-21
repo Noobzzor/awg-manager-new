@@ -52,6 +52,9 @@ func TestGatewayClientConfigDownloadIsPrivateAndActiveOnly(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "PrivateKey = client-private") || !strings.Contains(response.Body.String(), "Address = 10.66.0.2/32") || strings.Contains(response.Body.String(), "PresharedKey") {
 		t.Fatalf("unexpected client profile: %s", response.Body.String())
 	}
+	if !strings.Contains(response.Body.String(), "\nDNS = 1.1.1.1\n") {
+		t.Fatal("HTTP device export omitted DNS")
+	}
 
 	if err := registry.Disable(client.ID); err != nil {
 		t.Fatal(err)

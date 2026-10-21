@@ -1,0 +1,22 @@
+{
+  "status": "CHECKPOINT_NOT_RELEASE_FULL_SUITE_HAS_FAILURES",
+  "passed_leaf_tests": 8488,
+  "failed_tests": [
+    "TestByInterface_LoopbackRoot",
+    "TestConfDisabled_SuppressedWhenNDMSBouncesBackToRunning"
+  ],
+  "native_exit": 1,
+  "oom": false,
+  "owned_cleanup_verified": true,
+  "failure_notes": {
+    "TestByInterface_LoopbackRoot": "raw ICMP socket operation not permitted in cap-drop ALL runner",
+    "TestConfDisabled_SuppressedWhenNDMSBouncesBackToRunning": "NDMS timing/settle assertion failed; root cause unresolved; code/test unchanged from public main"
+  },
+  "targeted_dns_tests": 87,
+  "targeted_vet_build_exit": 0,
+  "image_runtime_dns_identity_restart": "PASS",
+  "local_packet_7_phases_at_384MiB": "PASS",
+  "vps_same_identity_policy_sites_database": "PASS",
+  "device_acceptance": "user reported Yandex working after manual DNS before update; after-update device confirmation and BLOCK/no-bypass remain OPEN",
+  "failed_package_go_sources_equal_public_main": true
+}

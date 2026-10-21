@@ -83,10 +83,10 @@ func (o *Orchestrator) ensureDirs() error {
 }
 
 // writeAtomic writes data to path atomically (unique temp + rename) via
-// storage.AtomicWrite, so a crash or concurrent writer can't leave a partial
+// storage.AtomicWritePerm with private permissions, so a crash or concurrent writer can't leave a partial
 // or collided file.
 func writeAtomic(path string, data []byte) error {
-	return storage.AtomicWrite(path, data)
+	return storage.AtomicWritePerm(path, data, storage.SecretFilePermission)
 }
 
 // fileExists returns true iff path exists and is a regular file.

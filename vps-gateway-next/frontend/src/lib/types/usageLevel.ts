@@ -47,7 +47,7 @@ const SECTION_MIN_LEVEL: Record<Section, UsageLevel> = {
 	monitoring: 'advanced',
 	terminal: 'advanced',
 	proxy: 'advanced',
-	gateway: 'advanced',
+	gateway: 'basic',
 };
 
 const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {

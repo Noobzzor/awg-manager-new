@@ -1,0 +1,55 @@
+{
+  "scope": "Only changed/new source and sanitized checkpoint; public main is unchanged. Existing accepted source blobs preserved. No scanner exclusions added.",
+  "new_alert_count": 6,
+  "reviewed_new_alerts": [
+    {
+      "path": "internal/gateway/ingress/awg_owned_peer_linux_test.go",
+      "line": 18,
+      "kind": "key32-literal",
+      "match_sha256": "e9a7f532f0622b9bfb561e56a3738584feb34a35e6db97e743fa527417c53901",
+      "line_sha256": "69920fd4373e15c03b99e9ff9f9c7b074d4136bada8ac9f916a6f8ae41cbf6bb",
+      "classification": "Explicit synthetic fixture: base64 of byte01 followed by31 zero bytes, publicly reproducible; no runtime credential."
+    },
+    {
+      "path": "internal/gateway/ingress/awg_userspace_linux_test.go",
+      "line": 185,
+      "kind": "key32-literal",
+      "match_sha256": "e9a7f532f0622b9bfb561e56a3738584feb34a35e6db97e743fa527417c53901",
+      "line_sha256": "a4a30c532137691c44a4ecb37685337a44a041c1285c3d848f19345543ca280b",
+      "classification": "Explicit synthetic fixture: base64 of byte01 followed by31 zero bytes, publicly reproducible; no runtime credential."
+    },
+    {
+      "path": "internal/gateway/ingress/awg_userspace_linux_test.go",
+      "line": 260,
+      "kind": "key32-literal",
+      "match_sha256": "e9a7f532f0622b9bfb561e56a3738584feb34a35e6db97e743fa527417c53901",
+      "line_sha256": "a4a30c532137691c44a4ecb37685337a44a041c1285c3d848f19345543ca280b",
+      "classification": "Explicit synthetic fixture: base64 of byte01 followed by31 zero bytes, publicly reproducible; no runtime credential."
+    },
+    {
+      "path": "internal/gateway/ingress/awg_userspace_linux_test.go",
+      "line": 278,
+      "kind": "key32-literal",
+      "match_sha256": "e9a7f532f0622b9bfb561e56a3738584feb34a35e6db97e743fa527417c53901",
+      "line_sha256": "92b0935ae26ed610179ba1816447b7e6dc60ce28a0731f3374545763bd82b0c7",
+      "classification": "Explicit synthetic fixture: base64 of byte01 followed by31 zero bytes, publicly reproducible; no runtime credential."
+    },
+    {
+      "path": "internal/gateway/warp/profile_test.go",
+      "line": 46,
+      "kind": "secret-assignment",
+      "match_sha256": "4c3da9a53188de189eed75acdd88c19ce44f0e2c92aa0b6b83e97272801730f1",
+      "line_sha256": "cb5eb7587c724a2f4fe1c198c264c7df04795ae5fea115bb83614d3e59275e26",
+      "classification": "Invalid literal PRIVATE_SENTINEL supplied only by negative-input test; no credential."
+    },
+    {
+      "path": "internal/gateway/warp/store_test.go",
+      "line": 161,
+      "kind": "secret-assignment",
+      "match_sha256": "4c3da9a53188de189eed75acdd88c19ce44f0e2c92aa0b6b83e97272801730f1",
+      "line_sha256": "bee0cfa9d065eb22ae0941fda6e5e031ae468a6562f8f7ea2cdf7fb13ae80efb",
+      "classification": "Invalid literal PRIVATE_SENTINEL supplied only by negative-input test; no credential."
+    }
+  ],
+  "excluded": "actual keys, client profiles, WARP vault/profile, raw logs, binaries, build artifacts, environment files, old dirty Git history"
+}

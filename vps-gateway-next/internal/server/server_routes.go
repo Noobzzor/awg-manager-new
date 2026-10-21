@@ -73,7 +73,14 @@ func (s *Server) registerLocalRoutes(mux *http.ServeMux) {
 			case activeWork && !state.Running:
 				reason = "not_running"
 			case activeWork:
-				ready, reason = true, "ready"
+				health, ok := s.localSingboxStatus.(interface{ IsResponsive(context.Context) bool })
+				if !ok {
+					reason = "health_unavailable"
+				} else if !health.IsResponsive(r.Context()) {
+					reason = "unresponsive"
+				} else {
+					ready, reason = true, "ready"
+				}
 			default:
 				ready, reason = true, "idle"
 			}

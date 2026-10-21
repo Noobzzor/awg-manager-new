@@ -21,6 +21,7 @@ var (
 )
 
 type gatewayClientHTTP struct {
+	warp            gatewayWARPBackend
 	registry        *gatewayingress.Registry
 	path            string
 	applier         gatewayingress.PeerApplier
@@ -88,6 +89,10 @@ func (h *gatewayClientHTTP) SetSubscriptionBaseURL(raw string) error {
 }
 
 func (h *gatewayClientHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/gateway/warp" || strings.HasPrefix(r.URL.Path, "/api/gateway/warp/") {
+		h.serveWARP(w, r)
+		return
+	}
 	if r.URL.Path == gatewayPolicyProfilesAPIPrefix || strings.HasPrefix(r.URL.Path, gatewayPolicyProfilesAPIPrefix+"/") {
 		if h.policies == nil {
 			h.notFound(w)

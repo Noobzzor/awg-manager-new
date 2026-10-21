@@ -9,7 +9,7 @@ import (
 )
 
 type GatewayRuntime struct {
-	Interface       *InterfaceManager
+	Interface       ManagedInterface
 	Forwarding      forwarding.Reconciler
 	PolicyInterface string
 }
@@ -18,11 +18,14 @@ func (r GatewayRuntime) Bootstrap(ctx context.Context, clientPool netip.Prefix, 
 	if r.Interface == nil {
 		return fmt.Errorf("gateway interface is not configured")
 	}
+	if err := r.Interface.Preflight(ctx); err != nil {
+		return fmt.Errorf("gateway ingress preflight: %w", err)
+	}
 	policyInterface := r.PolicyInterface
 	if policyInterface == "" {
 		policyInterface = "awgm0"
 	}
-	if err := r.Forwarding.Apply(ctx, clientPool, wanInterface, r.Interface.name, policyInterface); err != nil {
+	if err := r.Forwarding.Apply(ctx, clientPool, wanInterface, r.Interface.Name(), policyInterface); err != nil {
 		return err
 	}
 	if err := r.Interface.Ensure(ctx); err != nil {

@@ -43,6 +43,12 @@ func (o *Orchestrator) migrateGatewayPolicyLocked() error {
 		}
 	}
 
+	if oldPresent[0] {
+		if err := invalidateAppliedState(o.appliedPath); err != nil {
+			return fmt.Errorf("gateway filename migration invalidate applied state: %w", err)
+		}
+	}
+
 	archiveDir := ""
 	archive := func(path, location string) error {
 		if archiveDir == "" {

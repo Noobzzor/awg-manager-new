@@ -92,7 +92,7 @@ func TestRunComposition_SingboxUsesOnlyPortablePhasesInOrder(t *testing.T) {
 		deviceProxy: forbidden("device-proxy"), router: forbidden("router"),
 		listen: forbidden("keen-dns/listen"), shutdown: forbidden("legacy-shutdown"),
 		proxyShutdown: forbidden("proxy-shutdown"), boot: forbidden("router-boot"),
-		local: recordErr("local"), localServer: record("local-server"),
+		local: recordErr("local"), localServer: recordErr("local-server"),
 		localLifecycle: record("local-lifecycle"), serve: record("serve"),
 	}
 
@@ -116,7 +116,7 @@ func TestRunComposition_KeeneticPreservesLegacyPhaseOrder(t *testing.T) {
 		listen: record("listen"), shutdown: record("shutdown"),
 		proxyShutdown: record("proxy-shutdown"), boot: record("boot"), serve: record("serve"),
 		local:          func() error { t.Fatal("local phase called"); return nil },
-		localServer:    func() { t.Fatal("local server called") },
+		localServer:    func() error { t.Fatal("local server called"); return nil },
 		localLifecycle: func() { t.Fatal("local lifecycle called") },
 	}
 
@@ -139,7 +139,7 @@ func TestRunComposition_LocalStartupFailureStopsBeforeServerAndServe(t *testing.
 			called = append(called, "local")
 			return wantErr
 		},
-		localServer: record("local-server"), localLifecycle: record("local-lifecycle"), serve: record("serve"),
+		localServer: func() error { record("local-server")(); return nil }, localLifecycle: record("local-lifecycle"), serve: record("serve"),
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("error=%v, want %v", err, wantErr)

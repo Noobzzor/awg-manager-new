@@ -20,8 +20,8 @@ describe('секция proxy', () => {
 });
 
 describe('секция VPS Gateway', () => {
-	it('visible only from advanced usage level and maps nested routes', () => {
-		expect(isSectionVisible('basic', 'gateway')).toBe(false);
+	it('keeps the primary personal gateway available at the basic level and maps nested routes', () => {
+		expect(isSectionVisible('basic', 'gateway')).toBe(true);
 		expect(isSectionVisible('advanced', 'gateway')).toBe(true);
 		expect(isSectionVisible('expert', 'gateway')).toBe(true);
 		expect(pathToSection('/gateway')).toBe('gateway');

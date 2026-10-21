@@ -2,10 +2,13 @@ package policy
 
 import "net/netip"
 
+type WARPProvider interface{ WARPConfig() (*WARPConfig, error) }
+
 // Runtime owns the gateway policy apply path. It deliberately depends only on
 // the AWG3 catalog projection and the orchestrator slot saver, so server wiring
 // can inject existing production services without duplicating compilation rules.
 type Runtime struct {
+	WARP             WARPProvider
 	Catalog          AWG3Catalog
 	Saver            SlotSaver
 	ClientPool       netip.Prefix
@@ -36,6 +39,17 @@ func (r Runtime) PreviewWithSources(profile Profile, selectedVPNTag string, clie
 	options, err := CompileOptionsFromAWG3(r.Catalog, selectedVPNTag)
 	if err != nil {
 		return CompiledPolicy{}, err
+	}
+	if r.WARP != nil {
+		cfg, err := r.WARP.WARPConfig()
+		if err != nil {
+			return CompiledPolicy{}, err
+		}
+		if cfg != nil {
+			if err := AddWARP(&options, *cfg); err != nil {
+				return CompiledPolicy{}, err
+			}
+		}
 	}
 	options.Clients = clients
 	options.Groups = groups

@@ -4,8 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // appliedStatePath is the tmpfs location where the orchestrator records
@@ -52,6 +55,37 @@ func saveAppliedState(path string, st appliedState) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+// invalidateAppliedState clears only the skip credential. Keep HasTun so a
+// fresh manager after a partial migration still knows the surviving process
+// shape. Persist before changing runtime-visible files; never restore the old
+// hash after a later migration failure.
+func invalidateAppliedState(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil // no previous apply can authorize a skip
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("applied state is not a regular file: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var st appliedState
+	if json.Unmarshal(data, &st) != nil || st.Hash == "" {
+		return nil // corrupt or already invalidated history cannot authorize skip
+	}
+	st.Hash = ""
+	data, err = json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return storage.AtomicWrite(path, data)
 }
 
 // enabledConfigHashLocked hashes the ACTIVE bytes of every ENABLED slot,

@@ -266,9 +266,28 @@ func (a *app) setupLocal() error {
 	return nil
 }
 
-func (a *app) setupGatewayRuntime() error {
+func (a *app) setupGatewayRuntime() (startupErr error) {
 	if strings.ToLower(strings.TrimSpace(os.Getenv("AWG_GATEWAY_ENABLE"))) != "true" {
 		return nil
+	}
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("AWG_GATEWAY_BACKEND")))
+	if backend == "" {
+		backend = "wg"
+	}
+	if backend != "wg" && backend != "userspace-awg" {
+		return fmt.Errorf("invalid AWG_GATEWAY_BACKEND")
+	}
+	clientDNS, err := gatewayingress.ParseClientDNS(os.Getenv("AWG_GATEWAY_CLIENT_DNS"))
+	if err != nil {
+		return fmt.Errorf("invalid AWG_GATEWAY_CLIENT_DNS: %w", err)
+	}
+	var awgParameters *gatewayingress.AWGParameters
+	if backend == "userspace-awg" {
+		profile, err := parseGatewayAWGParameters(os.Getenv("AWG_GATEWAY_PARAMETERS"))
+		if err != nil {
+			return err
+		}
+		awgParameters = &profile
 	}
 	subscriptionBaseURL, err := validateGatewaySubscriptionBaseURL(os.Getenv("AWG_GATEWAY_SUBSCRIPTION_BASE_URL"))
 	if err != nil {
@@ -286,6 +305,9 @@ func (a *app) setupGatewayRuntime() error {
 	tool := strings.TrimSpace(os.Getenv("AWG_GATEWAY_TOOL"))
 	if tool == "" {
 		tool = "/usr/bin/wg"
+		if backend == "userspace-awg" {
+			tool = "/usr/bin/awg"
+		}
 	}
 	port := 51820
 	if raw := strings.TrimSpace(os.Getenv("AWG_GATEWAY_PORT")); raw != "" {
@@ -311,6 +333,29 @@ func (a *app) setupGatewayRuntime() error {
 	if err != nil || !pool.Contains(serverPrefix.Addr()) {
 		return fmt.Errorf("invalid AWG_GATEWAY_SERVER_ADDRESS %q", serverAddress)
 	}
+	var manager gatewayingress.ManagedInterface
+	var owned gatewayOwnedAWGInterface
+	if awgParameters != nil {
+		owned, err = newGatewayUserspaceAWG(name, port, serverAddress, a.dataDir, tool, *awgParameters)
+		if err != nil {
+			return err
+		}
+		// Make ownership reachable before the first process/filesystem effect.
+		a.deferOnExit(func() {
+			if err := owned.Close(context.Background()); err != nil {
+				slog.Error("gateway AWG cleanup incomplete", "error", err)
+			}
+		})
+		defer func() {
+			if startupErr != nil {
+				startupErr = errors.Join(startupErr, owned.Close(context.Background()))
+			}
+		}()
+		if err := owned.Preflight(context.Background()); err != nil {
+			return fmt.Errorf("gateway AWG semantic preflight: %w", err)
+		}
+		manager = owned
+	}
 	identity, err := gatewayingress.LoadOrCreateServerIdentity(filepath.Join(a.dataDir, "gateway-server-identity.json"), func() (string, string, error) {
 		return gatewayingress.GenerateKeyPairWithBinary(context.Background(), tool)
 	})
@@ -318,13 +363,24 @@ func (a *app) setupGatewayRuntime() error {
 		return err
 	}
 	a.gatewayIdentity = identity
+	if owned != nil {
+		if err := owned.SetPrivateKey(identity.PrivateKey); err != nil {
+			return err
+		}
+	} else {
+		wg := gatewayingress.NewLinuxInterfaceManagerWithBinary(tool, name, port, identity.PrivateKey)
+		wg.SetAddress(serverAddress)
+		manager = wg
+	}
 	a.gatewayRuntime = &gatewayingress.GatewayRuntime{
-		Interface:       gatewayingress.NewLinuxInterfaceManagerWithBinary(tool, name, port, identity.PrivateKey),
+		Interface:       manager,
 		Forwarding:      forwarding.NewLinuxReconciler(),
 		PolicyInterface: gatewaypolicy.GatewayTUNInterface,
 	}
-	a.gatewayRuntime.Interface.SetAddress(serverAddress)
 	a.gatewayPeerApplier = gatewayingress.NewLinuxCommandApplier(tool, name)
+	if owned != nil {
+		a.gatewayPeerApplier = owned
+	}
 	if err := a.gatewayRuntime.Bootstrap(context.Background(), pool, wan); err != nil {
 		return fmt.Errorf("bootstrap gateway runtime: %w", err)
 	}
@@ -346,6 +402,14 @@ func (a *app) setupGatewayRuntime() error {
 	}
 	if err != nil {
 		return fmt.Errorf("load gateway clients: %w", err)
+	}
+	if awgParameters != nil {
+		if err := clients.UseAWGParameters(*awgParameters); err != nil {
+			return fmt.Errorf("configure gateway AWG client export: %w", err)
+		}
+	}
+	if err := clients.UseClientDNS(clientDNS); err != nil {
+		return fmt.Errorf("configure gateway client DNS: %w", err)
 	}
 	a.gatewayClients = clients
 	if err := a.gatewayClients.ReconcilePeers(context.Background(), a.gatewayPeerApplier); err != nil {
@@ -377,8 +441,13 @@ func (a *app) setupGatewayRuntime() error {
 	if _, err := policyStore.Load(); err != nil {
 		return fmt.Errorf("load gateway policy profiles: %w", err)
 	}
+	warpProvider, err := a.setupGatewayWARP()
+	if err != nil {
+		return fmt.Errorf("configure gateway WARP: %w", err)
+	}
 	a.gatewayPolicyStore = policyStore
 	a.gatewayPolicy = gatewaypolicy.Runtime{
+		WARP:             warpProvider,
 		Catalog:          a.awg3Svc,
 		Saver:            a.sbOrch,
 		ClientPool:       pool,
@@ -388,11 +457,10 @@ func (a *app) setupGatewayRuntime() error {
 	return nil
 }
 
-func (a *app) setupLocalServer() {
+func (a *app) setupLocalServer() error {
 	frontendFS, err := frontend.FS()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load embedded frontend: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("load embedded frontend: %w", err)
 	}
 	a.sessionStore = auth.NewSessionStore(a.settingsStore.GetSessionTTL)
 	a.deferOnExit(a.sessionStore.Stop)
@@ -428,11 +496,13 @@ func (a *app) setupLocalServer() {
 		gatewayHandler.SetGatewayGroups(a.gatewayGroups)
 		if a.gatewayPolicyStore != nil {
 			gatewayHandler.SetGatewayPolicy(a.gatewayPolicyStore, a.gatewayPolicy)
+			if backend, ok := a.gatewayPolicy.WARP.(gatewayWARPBackend); ok {
+				gatewayHandler.SetGatewayWARP(backend)
+			}
 		}
 		gatewayHandler.SetClientSubscriptions(a.gatewaySubscriptions)
 		if err := gatewayHandler.SetSubscriptionBaseURL(a.gatewaySubscriptionBaseURL); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to configure gateway subscription URL: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("configure gateway subscription URL: %w", err)
 		}
 	}
 	a.srv = server.NewLocal(server.Config{
@@ -490,6 +560,7 @@ func (a *app) setupLocalServer() {
 	subHandler := api.NewSubscriptionHandler(a.subSvc, a.singboxOp, a.loggingService)
 	subHandler.SetNDMSProxyToggler(localNDMSProxyToggle{})
 	a.srv.SetSubscriptionHandler(subHandler)
+	return nil
 }
 
 func (a *app) setupLocalLifecycle() {

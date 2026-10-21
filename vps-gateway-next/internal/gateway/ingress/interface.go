@@ -10,6 +10,15 @@ import (
 	systemexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
+// ManagedInterface selects one ingress implementation. Its caller registers
+// Close before starting; userspace AWG preflight precedes forwarding/key writes.
+type ManagedInterface interface {
+	Name() string
+	Preflight(context.Context) error
+	Ensure(context.Context) error
+	Close(context.Context) error
+}
+
 type InterfaceManager struct {
 	ipBinary       string
 	awgBinary      string
@@ -49,6 +58,24 @@ func (m *InterfaceManager) SetAddress(address string) {
 		m.address = address
 	}
 }
+
+func (m *InterfaceManager) Name() string {
+	if m == nil {
+		return ""
+	}
+	return m.name
+}
+
+// Legacy WG has no userspace child to probe/join. Keep its accepted Ensure and
+// explicit Delete unchanged; Close must not delete a previously adopted link.
+func (m *InterfaceManager) Preflight(context.Context) error {
+	if m == nil {
+		return fmt.Errorf("gateway interface manager is not configured")
+	}
+	return nil
+}
+
+func (m *InterfaceManager) Close(context.Context) error { return nil }
 
 func (m *InterfaceManager) Ensure(ctx context.Context) error {
 	if m == nil || m.run == nil || m.ipBinary == "" || m.awgBinary == "" || m.name == "" || m.listenPort < 1 || m.listenPort > 65535 || m.privateKey == "" || m.address == "" {

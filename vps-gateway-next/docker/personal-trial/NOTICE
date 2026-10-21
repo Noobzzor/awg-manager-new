@@ -1,0 +1,7 @@
+AWG Manager personal local trial — Linux/amd64
+
+AWG Manager: Copyright (c) 2026 hoaxisr, MIT license (LICENSE-manager).
+AmneziaWG Go runtime derives from WireGuard Go: Copyright (C) 2017-2025 WireGuard LLC (LICENSE-awg); local IPC/TUN changes are recorded in the project's source and checkpoint manifests.
+The runtime base retains the upstream sing-box/Amnezia-box engine and distribution packages. Original package license notices remain in the base filesystem. The AWG control executable is retained at its previously verified binary checksum; it is not rebuilt or rebranded by this packaging step.
+
+Exact executable and base image hashes are in manifest.json and SHA256SUMS. This package contains no user keys, WARP account/profile or client configuration. New runtime data is generated only in the mounted /data volume.

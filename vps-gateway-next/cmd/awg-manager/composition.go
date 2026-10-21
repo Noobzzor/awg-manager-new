@@ -9,7 +9,8 @@ type compositionHooks struct {
 	singbox                                                  func() error
 	proxyShutdown, boot                                      func()
 	local                                                    func() error
-	localServer, localLifecycle                              func()
+	localServer                                             func() error
+	localLifecycle                                          func()
 	serve                                                    func()
 }
 
@@ -29,7 +30,9 @@ func runComposition(mode deploymentMode, h compositionHooks) error {
 		if err := h.local(); err != nil {
 			return err
 		}
-		h.localServer()
+		if err := h.localServer(); err != nil {
+			return err
+		}
 		h.localLifecycle()
 		h.serve()
 		return nil

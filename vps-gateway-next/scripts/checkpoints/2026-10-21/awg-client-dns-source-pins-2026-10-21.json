@@ -1,0 +1,9 @@
+{
+  "internal/gateway/ingress/registry.go": "3af714e59c0facc30458114255076e7c24b64d0fc0cade9f51a4a964a20791f8",
+  "internal/gateway/ingress/config.go": "6a18830dac1255df51b2ba3f929a52900d0725cf9196ddb9340218362b197aac",
+  "internal/gateway/ingress/client_dns.go": "69037d5dbbb7e8331ecd1845fd669dd551caaba04d44ee59ffc710a371371834",
+  "internal/gateway/ingress/client_dns_test.go": "69670b599c8e2be4ec492a8c9c1c946746e5ead8086d9f4ce75ebde75ec6cba2",
+  "cmd/awg-manager/wiring_local.go": "f03267d89caa3235c3f11eb55c8cbc8c489dd2add00ef39bc15071782c72f9b9",
+  "cmd/awg-manager/gateway_client_dns_test.go": "b0b1a4fd8af2bf5ed85c240b4caf8630bf22e0167afbb7552768dfe08561c256",
+  "cmd/awg-manager/gateway_client_config_http_test.go": "1d1103b105ec8b0f63e652d5108084533a4d0a506cfa2fe15a567a56e682da57"
+}

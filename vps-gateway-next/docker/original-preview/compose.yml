@@ -1,0 +1,53 @@
+name: awgm-original-preview
+services:
+  awg:
+    image: awgm-original-preview:local
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: docker/original-preview/Dockerfile
+    init: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
+    devices: [/dev/net/tun:/dev/net/tun]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      AWG_GATEWAY_PUBLIC_ENDPOINT: ${AWG_GATEWAY_PUBLIC_ENDPOINT:?Set the address clients will use}
+      AWG_ORIGINAL_WARP_PROFILE_FILE: ${AWG_ORIGINAL_WARP_PROFILE_FILE:-}
+    ports:
+      - "${AWG_UDP_PORT:-51820}:51820/udp"
+    volumes:
+      - state:/data
+      - "${AWG_PREVIEW_DIR:?Set the absolute preview directory}/bootstrap:/bootstrap:ro"
+    read_only: true
+    tmpfs:
+      - /run:size=16m,mode=0750
+      - /tmp:size=128m,mode=1777
+    pids_limit: 128
+    mem_limit: 384m
+    memswap_limit: 384m
+    cpus: 1
+
+  panel:
+    image: awgm-original-preview:local
+    platform: linux/amd64
+    pull_policy: never
+    entrypoint: ["/usr/local/bin/awg-panel-socket"]
+    depends_on:
+      awg:
+        condition: service_healthy
+        restart: true
+    network_mode: service:awg
+    user: "${AWG_PANEL_UID:?Set the SSH user ID}:${AWG_PANEL_GID:?Set the SSH group ID}"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - "${AWG_PREVIEW_DIR:?Set the absolute preview directory}/panel:/panel"
+
+volumes:
+  state:

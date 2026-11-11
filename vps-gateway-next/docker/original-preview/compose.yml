@@ -1,7 +1,7 @@
 name: awgm-original-preview
 services:
   awg:
-    image: awgm-original-preview:local
+    image: ${AWG_PREVIEW_IMAGE:-awgm-original-preview:local}
     platform: linux/amd64
     build:
       context: ../..
@@ -32,7 +32,7 @@ services:
     cpus: 1
 
   panel:
-    image: awgm-original-preview:local
+    image: ${AWG_PREVIEW_IMAGE:-awgm-original-preview:local}
     platform: linux/amd64
     pull_policy: never
     entrypoint: ["/usr/local/bin/awg-panel-socket"]

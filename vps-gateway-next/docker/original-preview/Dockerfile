@@ -13,13 +13,34 @@ WORKDIR /src
 COPY . .
 COPY --from=frontend /src/frontend/build ./frontend/build
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=local
-RUN go build -mod=vendor -trimpath -tags embed_frontend -o /out/awg-manager ./cmd/awg-manager \
- && go build -mod=vendor -trimpath -o /out/awg-panel-socket ./docker/original-preview/panel-socket.go
+RUN go build -mod=vendor -trimpath -ldflags="-s -w" -tags embed_frontend -o /out/awg-manager ./cmd/awg-manager \
+ && go build -mod=vendor -trimpath -ldflags="-s -w" -o /out/awg-panel-socket ./docker/original-preview/panel-socket.go
 
-FROM ${RUNTIME_IMAGE}
+FROM ${RUNTIME_IMAGE} AS tunnel-tools
+
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl iproute2 iptables nftables procps util-linux wireguard-tools \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=tunnel-tools /usr/local/bin/sing-box /usr/local/bin/amneziawg-go /usr/local/bin/awg /usr/local/bin/
+COPY --from=tunnel-tools /usr/local/share/awgm-trial/LICENSE-awg /usr/local/share/awgm-trial/LICENSE-manager /usr/local/share/awgm-trial/NOTICE /usr/local/share/awgm-trial/
 COPY --from=builder --chmod=0755 /out/awg-manager /usr/local/bin/awg-manager
 COPY --from=builder --chmod=0755 /out/awg-panel-socket /usr/local/bin/awg-panel-socket
-ENV AWG_ROUTER_POLICY_MODE=original \
+ENV AWG_MODE=singbox \
+    AWG_PROXY_ADDR=127.0.0.1:1080 \
+    SINGBOX_BIN=/usr/local/bin/sing-box \
+    AWG_GATEWAY_ENABLE=true \
+    AWG_GATEWAY_BACKEND=userspace-awg \
+    AWG_GATEWAY_RUNTIME_BINARY=/usr/local/bin/amneziawg-go \
+    AWG_GATEWAY_IP_BINARY=/usr/sbin/ip \
+    AWG_GATEWAY_TOOL=/usr/local/bin/awg \
+    AWG_GATEWAY_INTERFACE=awg0 \
+    AWG_GATEWAY_WAN_INTERFACE=eth0 \
+    AWG_GATEWAY_PORT=51820 \
+    AWG_GATEWAY_CLIENT_POOL=10.77.0.0/24 \
+    AWG_GATEWAY_SERVER_ADDRESS=10.77.0.1/24 \
+    AWG_GATEWAY_PARAMETERS='{"jc":3,"jmin":40,"jmax":80,"s1":16,"s2":16,"s3":16,"s4":16,"h1":1001,"h2":1002,"h3":1003,"h4":1004}' \
+    AWG_ROUTER_POLICY_MODE=original \
     AWG_ORIGINAL_BROWSER_PREVIEW=1 \
     AWG_HTTP_ADDR=127.0.0.1:2222 \
     AWG_DATA_DIR=/data/original \

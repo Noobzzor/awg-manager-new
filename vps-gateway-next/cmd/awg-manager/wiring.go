@@ -16,6 +16,7 @@ import (
 	gatewaygroups "github.com/hoaxisr/awg-manager/internal/gateway/groups"
 	gatewayingress "github.com/hoaxisr/awg-manager/internal/gateway/ingress"
 	gatewaypolicy "github.com/hoaxisr/awg-manager/internal/gateway/policy"
+	"github.com/hoaxisr/awg-manager/internal/gateway/routerpolicy"
 	gatewaysubscription "github.com/hoaxisr/awg-manager/internal/gateway/subscription"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -36,6 +37,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
@@ -69,6 +71,10 @@ import (
 // other, so they belong to the composition root, not to either package they
 // bridge.
 type app struct {
+	originalRouterMode    bool
+	originalRouterFresh   bool
+	originalRouterService router.Service
+	originalWARP          originalWARPCatalog
 	// flags
 	mode             deploymentMode
 	dataDir          string
@@ -140,26 +146,30 @@ type app struct {
 	dnsRouteStore        *dnsroute.Store
 	dnsRouteService      *dnsroute.ServiceImpl
 	localDNSRouteService *dnsroute.SingboxService
-	dnsFailover          *dnsroute.FailoverManager
-	dnsRefreshScheduler  *dnsroute.Scheduler
-	staticRouteStore     *storage.StaticRouteStore
-	staticRouteService   *staticroute.ServiceImpl
-	presetCatalog        *presets.Catalog
-	externalService      *external.Service
-	systemTunnelSvc      *systemtunnel.ServiceImpl
-	testService          *testing.Service
-	pingCheckService     *pingcheck.Service
-	pingCheckFacade      *pingcheck.Facade
-	monitoringService    *monitoring.Service
-	keeneticClient       *auth.KeeneticClient
-	sessionStore         *auth.SessionStore
-	trafficHistory       *traffic.History
-	sysfsTrafficPoller   *traffic.SysfsPoller
-	updaterService       *updater.Service
-	managedService       *managed.Service
-	terminalManager      *terminal.ManagerImpl
-	clientRouteService   *clientroute.ServiceImpl
-	accessPolicySvc      *accesspolicy.ServiceImpl
+	// Outer local writer coordinator, independent from heavyop.Default.
+	// The original editor must share it when its startup wiring is enabled.
+	localConfigGate     heavyop.Gate
+	localPolicyOwner    *routerpolicy.PolicyOwnerLease
+	dnsFailover         *dnsroute.FailoverManager
+	dnsRefreshScheduler *dnsroute.Scheduler
+	staticRouteStore    *storage.StaticRouteStore
+	staticRouteService  *staticroute.ServiceImpl
+	presetCatalog       *presets.Catalog
+	externalService     *external.Service
+	systemTunnelSvc     *systemtunnel.ServiceImpl
+	testService         *testing.Service
+	pingCheckService    *pingcheck.Service
+	pingCheckFacade     *pingcheck.Facade
+	monitoringService   *monitoring.Service
+	keeneticClient      *auth.KeeneticClient
+	sessionStore        *auth.SessionStore
+	trafficHistory      *traffic.History
+	sysfsTrafficPoller  *traffic.SysfsPoller
+	updaterService      *updater.Service
+	managedService      *managed.Service
+	terminalManager     *terminal.ManagerImpl
+	clientRouteService  *clientroute.ServiceImpl
+	accessPolicySvc     *accesspolicy.ServiceImpl
 
 	// sing-box
 	singboxOp                  *singbox.Operator

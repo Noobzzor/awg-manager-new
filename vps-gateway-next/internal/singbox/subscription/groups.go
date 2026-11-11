@@ -244,6 +244,11 @@ func (s *Service) validateGroupSubs(ids []string) error {
 // Зеркалит Service.Create по rollback-семантике: при неудаче частично
 // созданные сущности снимаются и строка удаляется из store.
 func (s *Service) CreateGroup(ctx context.Context, in GroupCreateInput) (*AggregateGroup, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	if s.groups == nil {
 		return nil, ErrGroupsDisabled
 	}
@@ -331,6 +336,11 @@ func (s *Service) CreateGroup(ctx context.Context, in GroupCreateInput) (*Aggreg
 // UpdateGroup применяет частичный патч и пере-материализует группу
 // (stage + один Reload). Смена label пробрасывается в описание NDMS Proxy.
 func (s *Service) UpdateGroup(ctx context.Context, id string, patch GroupUpdatePatch) (*AggregateGroup, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	if s.groups == nil {
 		return nil, ErrGroupsDisabled
 	}
@@ -385,6 +395,11 @@ func (s *Service) UpdateGroup(ctx context.Context, id string, patch GroupUpdateP
 // retry возможен (зеркалит deleteLocked подписок); иначе agg-* сущности
 // зависли бы в конфиге без владельца, а повторный вызов получал бы 404.
 func (s *Service) DeleteGroup(ctx context.Context, id string) error {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	if s.groups == nil {
 		return ErrGroupsDisabled
 	}

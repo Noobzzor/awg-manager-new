@@ -16,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox/configmerge"
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/perftrace"
@@ -484,6 +485,11 @@ func isExecutable(path string) bool {
 // В режиме NDMS Proxy disabled пропускает SyncProxies и, при наличии
 // сигнала, делает one-shot orphan cleanup.
 func (o *Operator) Reconcile(ctx context.Context) error {
+	releaseOperation, operationErr := o.acquireWriterOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	defer perftrace.LogDuration(o.runtimeLogger, "perf", "Reconcile", "total", time.Now())
 	if o.manuallyStopped.Load() {
 		if o.runtimeLogger != nil {
@@ -575,7 +581,7 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 //	all false, err=nil — nothing to do (already running / manual stop);
 //	err != nil      — the start itself failed.
 //
-// Manual Control("start"/"restart") stays ungated and resets the backoff.
+// Manual Control("start"/"restart") bypasses crash-loop backoff and resets it.
 // waitClash=true
 // (Operator.Reconcile / watchdog) preserves the legacy startAndWait
 // behaviour — block until the Clash API answers, stop the half-started
@@ -705,6 +711,11 @@ func (o *Operator) QuiesceStop(_ context.Context) error {
 // The persisted intent survives awgm restarts so the watchdog never
 // resurrects a daemon the user shut down.
 func (o *Operator) Control(ctx context.Context, action string) error {
+	releaseOperation, operationErr := o.acquireWriterOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	if o.runtimeLogger != nil {
 		o.runtimeLogger.Info("control", "", "requested action="+action)
 	}
@@ -860,7 +871,17 @@ func (o *Operator) startAndWait(ctx context.Context) (spawned bool, err error) {
 	if o.runtimeLogger != nil {
 		o.runtimeLogger.Info("start-and-wait", "", "starting sing-box process")
 	}
-	spawned, err = o.proc.StartSpawned()
+	// Retain the same process generation through readiness and failure cleanup.
+	// Otherwise a delayed health failure could stop a newer transaction's child.
+	lease, err := o.proc.AcquireProcessLease(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer lease.Close()
+	if o.proc.recoveryRequired.Load() {
+		return false, orchestrator.ErrRuntimeRecoveryRequired
+	}
+	spawned, err = lease.StartSpawned()
 	if err != nil {
 		safeErr := sanitizeSingboxLogText(err.Error())
 		o.setLastError(safeErr)
@@ -879,7 +900,7 @@ func (o *Operator) startAndWait(ctx context.Context) (spawned bool, err error) {
 		}
 	} else if err := o.waitClashReady(ctx, maxSingboxBootWait); err != nil {
 		o.log.Warn("sing-box start: clash API did not become ready, stopping", "err", err)
-		_ = o.proc.Stop()
+		_ = lease.Stop()
 		// LastError is populated either by handleExit (post-grace death)
 		// or here (clash never came up); prefer the more specific stderr
 		// tail captured by handleExit if it fired, otherwise note the

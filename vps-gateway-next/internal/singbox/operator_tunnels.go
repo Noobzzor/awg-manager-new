@@ -202,6 +202,11 @@ func ParseTunnelLinksInput(linksText string) vlink.BatchResult {
 // AddTunnels parses one or more links and atomically adds them.
 // Returns successfully-added tunnels and parse errors.
 func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelInfo, []BatchError, error) {
+	releaseOperation, operationErr := o.acquireWriterOperation(ctx)
+	if operationErr != nil {
+		return nil, nil, operationErr
+	}
+	defer releaseOperation()
 	defer perftrace.LogDuration(o.runtimeLogger, "perf", "AddTunnels", "total", time.Now())
 	o.migrationMu.Lock()
 	defer o.migrationMu.Unlock()
@@ -305,7 +310,7 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 		return nil, parseErrs, nil
 	}
 
-	if err := o.ApplyConfig(ctx, cfg); err != nil {
+	if err := o.applyConfigOwned(cfg); err != nil {
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Error("single-add", "", "apply config failed: "+err.Error())
 		}
@@ -361,6 +366,11 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 
 // RemoveTunnel removes outbound+inbound+route+Proxy for a tag.
 func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
+	releaseOperation, operationErr := o.acquireWriterOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	defer perftrace.LogDuration(o.runtimeLogger, "perf", "RemoveTunnel", "total", time.Now())
 	o.migrationMu.Lock()
 	defer o.migrationMu.Unlock()
@@ -430,6 +440,11 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 
 // UpdateTunnel replaces outbound JSON, reloads.
 func (o *Operator) UpdateTunnel(ctx context.Context, tag string, outbound json.RawMessage) error {
+	releaseOperation, operationErr := o.acquireWriterOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	if o.runtimeLogger != nil {
 		o.runtimeLogger.Info("single-update", tag, "start")
 	}
@@ -446,7 +461,7 @@ func (o *Operator) UpdateTunnel(ctx context.Context, tag string, outbound json.R
 		}
 		return err
 	}
-	if err := o.ApplyConfig(ctx, cfg); err != nil {
+	if err := o.applyConfigOwned(cfg); err != nil {
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Error("single-update", tag, "apply config failed: "+err.Error())
 		}
@@ -467,6 +482,11 @@ var reservedOutboundTags = map[string]struct{}{
 // RenameTunnel changes a single sing-box tunnel tag and rewrites every
 // singbox-router reference that points at that outbound.
 func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) error {
+	releaseOperation, operationErr := o.acquireWriterOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	defer perftrace.LogDuration(o.runtimeLogger, "perf", "RenameTunnel", "total", time.Now())
 	oldTag = strings.TrimSpace(oldTag)
 	newTag = strings.TrimSpace(newTag)
@@ -533,7 +553,7 @@ func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) erro
 		}
 		refsRenamed = true
 	}
-	if err := o.ApplyConfig(ctx, cfg); err != nil {
+	if err := o.applyConfigOwned(cfg); err != nil {
 		if refsRenamed {
 			_ = o.outboundRefs.RenameExternalOutboundTag(context.Background(), newTag, oldTag)
 		}
@@ -578,6 +598,17 @@ func (o *Operator) HasUserTunnels() bool {
 // Прежде этот гейт давал preflightConfigDir, снятый вместе с ручным
 // протоколом; здесь он честнее — смотрит в КАНДИДАТА, а не в каталог.
 func (o *Operator) ApplyConfig(ctx context.Context, cfg *Config) error {
+	releaseOperation, operationErr := o.acquireWriterOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
+	return o.applyConfigOwned(cfg)
+}
+
+// Caller owns writer admission (or uses the legacy uncoordinated mode).
+// Add/Update/Rename must use this path rather than re-entering ApplyConfig.
+func (o *Operator) applyConfigOwned(cfg *Config) error {
 	if err := o.checkTunnelFeatures(cfg); err != nil {
 		return err
 	}
@@ -711,6 +742,11 @@ func (o *Operator) LoadCurrentConfig() (*Config, error) {
 // Clash API. Returns ErrSingboxNotRunning if the daemon is not alive —
 // callers decide whether to treat that as fatal.
 func (o *Operator) SetSelectorDefault(ctx context.Context, selectorTag, memberTag string) error {
+	releaseOperation, operationErr := o.acquireWriterOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	if running, _ := o.proc.IsRunning(); !running {
 		return ErrSingboxNotRunning
 	}

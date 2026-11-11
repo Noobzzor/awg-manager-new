@@ -2,6 +2,7 @@ package router
 
 import (
 	"errors"
+	"path/filepath"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
@@ -22,6 +23,17 @@ import (
 // to reap historical leftovers. Best-effort: any config read error aborts the
 // sweep (fail-safe — never GC against an incomplete referenced set).
 func (s *ServiceImpl) GCRuleSetArtifacts() {
+	if s.portableGuard != nil {
+		s.portableGuard.Lock()
+		defer s.portableGuard.Unlock()
+	}
+	if s.portable != nil && (s.deps.Orch == nil || s.deps.Orch.RuntimeRecoveryRequired()) {
+		// The journal can require either before/after version, even when the
+		// current canonical documents reference only one. Retain everything
+		// until its owner confirms recovery, under the same writer gate.
+		s.appLog.Warn("gc", "rule-sets", "skip portable rule-set GC pending runtime recovery")
+		return
+	}
 	referenced, err := s.referencedRuleSetArtifactBases()
 	if err != nil {
 		s.appLog.Warn("gc", "rule-sets", "skip rule-set artifact GC: "+err.Error())
@@ -34,18 +46,32 @@ func (s *ServiceImpl) GCRuleSetArtifacts() {
 // referenced by any router/fakeip config (applied or pending).
 func (s *ServiceImpl) referencedRuleSetArtifactBases() (map[string]struct{}, error) {
 	referenced := make(map[string]struct{})
+	add := func(cfg *RouterConfig) {
+		addRuleSetArtifactBases(referenced, cfg)
+		if s.portable == nil || cfg == nil {
+			return
+		}
+		materializer := s.ruleSetMaterializer()
+		for _, rs := range cfg.Route.RuleSet {
+			if materializer.isManagedLocalRuleSet(rs) {
+				if base, ok := ruleSetArtifactBase(filepath.Base(rs.Path)); ok {
+					referenced[base] = struct{}{}
+				}
+			}
+		}
+	}
 
 	// Router slot: effective (pending draft if present, else active) + applied.
 	cfg, err := s.loadRouterConfig()
 	if err != nil {
 		return nil, err
 	}
-	addRuleSetArtifactBases(referenced, cfg)
+	add(cfg)
 	cfg, err = s.loadAppliedRouterConfig()
 	if err != nil {
 		return nil, err
 	}
-	addRuleSetArtifactBases(referenced, cfg)
+	add(cfg)
 
 	// FakeIP slot (orch-only): it materializes into the same rule-sets/ dirs.
 	if s.deps.Orch != nil {
@@ -53,7 +79,7 @@ func (s *ServiceImpl) referencedRuleSetArtifactBases() (map[string]struct{}, err
 		if err != nil {
 			return nil, err
 		}
-		addRuleSetArtifactBases(referenced, cfg)
+		add(cfg)
 		data, err := s.deps.Orch.LoadApplied(orchestrator.SlotFakeIP)
 		if err != nil {
 			if !errors.Is(err, orchestrator.ErrUnknownSlot) {
@@ -64,7 +90,7 @@ func (s *ServiceImpl) referencedRuleSetArtifactBases() (map[string]struct{}, err
 			if err != nil {
 				return nil, err
 			}
-			addRuleSetArtifactBases(referenced, applied)
+			add(applied)
 		}
 	}
 	return referenced, nil

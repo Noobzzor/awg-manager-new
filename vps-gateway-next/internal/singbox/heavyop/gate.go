@@ -1,7 +1,10 @@
 // Package heavyop serializes memory-heavy sing-box work (config apply/reload).
 package heavyop
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // Gate ensures memory-heavy sing-box operations do not run concurrently.
 // Channel-backed (not sync.Mutex) — TryLock'ом пользуется лечение
@@ -23,6 +26,24 @@ func (g *Gate) sem() chan struct{} {
 // Lock blocks until no other heavy operation is running.
 func (g *Gate) Lock() {
 	g.sem() <- struct{}{}
+}
+
+// LockContext waits for the same lifecycle gate, allowing a queued operation
+// to be cancelled without acquiring or retaining the lock.
+func (g *Gate) LockContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case g.sem() <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			g.Unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Unlock releases the gate.

@@ -26,7 +26,9 @@ import (
 	gatewaygroups "github.com/hoaxisr/awg-manager/internal/gateway/groups"
 	gatewayingress "github.com/hoaxisr/awg-manager/internal/gateway/ingress"
 	gatewaypolicy "github.com/hoaxisr/awg-manager/internal/gateway/policy"
+	"github.com/hoaxisr/awg-manager/internal/gateway/routerpolicy"
 	gatewaysubscription "github.com/hoaxisr/awg-manager/internal/gateway/subscription"
+	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -142,14 +144,60 @@ type localNDMSProxyToggle struct{}
 
 func (localNDMSProxyToggle) IsSingboxNDMSProxyEnabled() bool { return false }
 
+func (a *app) requireLocalGatewayOwner(ctx context.Context) error {
+	if err := routerpolicy.RequireGatewayOwner(ctx, a.dataDir); err != nil {
+		return err
+	}
+	if a.localPolicyOwner == nil {
+		return fmt.Errorf("local policy owner lease is absent")
+	}
+	return a.localPolicyOwner.Verify(ctx)
+}
+
+// Called by main before setupCore can load/quarantine settings or auth state.
+// setupLocal repeats this idempotently for direct callers of that entry point.
+func (a *app) prepareLocalPolicyOwner() error {
+	requested := strings.TrimSpace(os.Getenv("AWG_ROUTER_POLICY_MODE"))
+	if requested == "original" {
+		return a.prepareOriginalPolicyOwner()
+	}
+	if requested != "" && requested != "gateway" {
+		return fmt.Errorf("unsupported AWG_ROUTER_POLICY_MODE")
+	}
+	if a.localPolicyOwner != nil {
+		return a.requireLocalGatewayOwner(context.Background())
+	}
+	if err := routerpolicy.RequireGatewayOwner(context.Background(), a.dataDir); err != nil {
+		return fmt.Errorf("local policy owner admission: %w", err)
+	}
+	if err := os.MkdirAll(a.dataDir, 0755); err != nil {
+		return fmt.Errorf("prepare local policy data directory: %w", err)
+	}
+	owner, err := routerpolicy.AcquirePolicyOwner(context.Background(), a.dataDir, routerpolicy.PolicyOwnerGateway)
+	if err != nil {
+		return fmt.Errorf("acquire local policy owner: %w", err)
+	}
+	a.localPolicyOwner = owner
+	// Registered before all producers: LIFO cleanup closes it last.
+	a.deferOnExit(func() { _ = owner.Close() })
+	return nil
+}
+
 // setupLocal constructs only portable storage/events/sing-box/orchestrator/
 // AWG3 state. In particular it does not call the legacy setupSingbox phase,
 // whose subscriptions, installer and updater are Keenetic/Entware-aware.
 func (a *app) setupLocal() error {
+	if err := a.prepareLocalPolicyOwner(); err != nil {
+		return err
+	}
+	if a.originalRouterMode {
+		return a.setupOriginalLocal()
+	}
 	a.eventBus = events.NewBus()
 	a.loggingService.SetEventBus(a.eventBus)
 
 	core, err := buildSingboxCore(singboxCoreDeps{
+		operationCoordinator:   &a.localConfigGate,
 		settings:               a.settingsStore,
 		appLog:                 a.loggingService,
 		bus:                    a.eventBus,
@@ -198,6 +246,7 @@ func (a *app) setupLocal() error {
 	}
 	dnsReconciler := dnsroute.NewSingboxReconciler(a.sbOrch, a.awg3Store, upstream)
 	a.localDNSRouteService = dnsroute.NewSingboxService(a.dnsRouteStore, dnsReconciler, a.loggingService)
+	a.localDNSRouteService.SetOperationCoordinator(&a.localConfigGate)
 	a.downloadSvc = downloader.NewService(downloader.Deps{})
 	a.localDNSRouteService.SetDownloader(&dnsRouteDownloaderAdapter{svc: a.downloadSvc})
 	if err := a.localDNSRouteService.Reconcile(context.Background()); err != nil {
@@ -218,6 +267,7 @@ func (a *app) setupLocal() error {
 		return fmt.Errorf("load local subscription config: %w", err)
 	}
 	a.subSvc = subscription.NewService(a.subStore, a.subAdapter)
+	a.subSvc.SetOperationCoordinator(&a.localConfigGate)
 	a.subSvc.SetAppLogger(a.loggingService)
 	a.subSvc.SetNDMSProxyEnabled(func() bool { return false })
 	if err := a.subSvc.LoadHappKeys(); err != nil {
@@ -412,6 +462,11 @@ func (a *app) setupGatewayRuntime() (startupErr error) {
 		return fmt.Errorf("configure gateway client DNS: %w", err)
 	}
 	a.gatewayClients = clients
+	if a.originalRouterMode {
+		// Keep peers unavailable until original journal recovery and the actual
+		// owned TUN generation are confirmed. Never construct legacy policy18.
+		return nil
+	}
 	if err := a.gatewayClients.ReconcilePeers(context.Background(), a.gatewayPeerApplier); err != nil {
 		return fmt.Errorf("reconcile persisted gateway peers: %w", err)
 	}
@@ -458,6 +513,9 @@ func (a *app) setupGatewayRuntime() (startupErr error) {
 }
 
 func (a *app) setupLocalServer() error {
+	if a.originalRouterMode {
+		return a.setupOriginalLocalServer()
+	}
 	frontendFS, err := frontend.FS()
 	if err != nil {
 		return fmt.Errorf("load embedded frontend: %w", err)
@@ -465,12 +523,14 @@ func (a *app) setupLocalServer() error {
 	a.sessionStore = auth.NewSessionStore(a.settingsStore.GetSessionTTL)
 	a.deferOnExit(a.sessionStore.Stop)
 	awg3Handler := api.NewAwg3Handler(a.awg3Store, a.awg3Svc, nil, a.loggingService)
+	awg3Handler.SetOperationCoordinator(&a.localConfigGate)
 	awg3Handler.SetAfterMutation(func(candidate []awg3endpoint.Record) (func() error, error) {
 		return a.localDNSRouteService.ReconcileAWG3Candidate(context.Background(), candidate)
 	})
 	dnsRouteHandler := api.NewDNSRouteHandler(a.localDNSRouteService, a.loggingService)
 	dnsRouteHandler.SetEventBus(a.eventBus)
 	settingsHandler := api.NewSettingsHandler(a.settingsStore, a.loggingService)
+	settingsHandler.SetOperationCoordinator(&a.localConfigGate)
 	settingsHandler.SetEventBus(a.eventBus)
 	settingsHandler.SetApplyLoggingSettings(a.loggingService.ApplySettings)
 	settingsHandler.SetApplySingboxLogSettings(func() error {
@@ -492,6 +552,7 @@ func (a *app) setupLocalServer() error {
 	}
 	gatewayHandler := newGatewayClientHTTP(a.gatewayClients, filepath.Join(a.dataDir, "gateway-clients.json"), a.gatewayPeerApplier)
 	if gatewayHandler != nil {
+		gatewayHandler.SetMutationAdmission(&a.localConfigGate, a.requireLocalGatewayOwner)
 		gatewayHandler.SetClientConfig(a.gatewayIdentity.PublicKey, os.Getenv("AWG_GATEWAY_PUBLIC_ENDPOINT"))
 		gatewayHandler.SetGatewayGroups(a.gatewayGroups)
 		if a.gatewayPolicyStore != nil {
@@ -529,10 +590,15 @@ func (a *app) setupLocalServer() error {
 			Gateway:         gatewayHandler,
 		},
 	})
+	// The original service catalog is storage-backed and does not require
+	// Keenetic. Use the same builtins/overlay and HTTP handler in VPS mode.
+	a.srv.SetPresetCatalog(presets.NewCatalog(presets.NewStore(a.dataDir)))
 	// These handlers consume only the local orchestrator/config directory and
 	// the sing-box loopback Clash API. They stay outside router wiring.
 	a.srv.SetSingboxConfigHandler(api.NewSingboxConfigHandler(a.sbOrch.ConfigDir))
-	a.srv.SetSingboxConfigEditorHandler(api.NewSingboxConfigEditorHandler(a.sbOrch, a.loggingService))
+	configEditor := api.NewSingboxConfigEditorHandler(a.sbOrch, a.loggingService)
+	configEditor.SetOperationCoordinator(&a.localConfigGate)
+	a.srv.SetSingboxConfigEditorHandler(configEditor)
 	a.srv.SetSingboxInboundsHandler(api.NewSingboxInboundsHandler(api.SingboxInboundsDeps{
 		ConfigDir:        a.sbOrch.ConfigDir,
 		NDMSProxyEnabled: func() bool { return false },

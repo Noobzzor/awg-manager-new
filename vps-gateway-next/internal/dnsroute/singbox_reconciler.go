@@ -9,6 +9,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
@@ -208,12 +209,18 @@ func (r *SingboxReconciler) effectiveReservedTags() (map[string]struct{}, map[st
 // one durable store commit; reads share the transaction lock and therefore see
 // either the old committed snapshot or the new one, never the candidate.
 type SingboxService struct {
-	mu         dnsRouteTransactionLock
-	core       *ServiceImpl
-	store      *Store
-	reconciler *SingboxReconciler
-	appLogger  logging.AppLogger
+	operationGate *heavyop.Gate
+	mu            dnsRouteTransactionLock
+	core          *ServiceImpl
+	store         *Store
+	reconciler    *SingboxReconciler
+	appLogger     logging.AppLogger
 }
+
+// SetOperationCoordinator is startup-only. The gate is a dedicated writer
+// coordinator, distinct from heavyop.Default; all local config producers and
+// the original editor must share the same instance before capability enable.
+func (s *SingboxService) SetOperationCoordinator(gate *heavyop.Gate) { s.operationGate = gate }
 
 func NewSingboxService(store *Store, reconciler *SingboxReconciler, appLogger logging.AppLogger) *SingboxService {
 	core := NewService(store, nil, nil, nil, appLogger)
@@ -233,7 +240,13 @@ func (s *SingboxService) List(ctx context.Context) ([]DomainList, error) {
 	return s.core.List(ctx)
 }
 
-func (s *SingboxService) mutate(run func(*ServiceImpl) error) error {
+func (s *SingboxService) mutate(ctx context.Context, run func(*ServiceImpl) error) error {
+	if s.operationGate != nil {
+		if err := s.operationGate.LockContext(ctx); err != nil {
+			return err
+		}
+		defer s.operationGate.Unlock()
+	}
 	unlockAWG := s.lockAWGRead()
 	defer unlockAWG()
 	s.mu.Lock()
@@ -288,38 +301,44 @@ func cloneStoreData(data *StoreData) (*StoreData, error) {
 
 func (s *SingboxService) Create(ctx context.Context, list DomainList) (out *DomainList, err error) {
 	list.Backend = BackendSingbox
-	err = s.mutate(func(core *ServiceImpl) error { var e error; out, e = core.Create(ctx, list); return e })
+	err = s.mutate(ctx, func(core *ServiceImpl) error { var e error; out, e = core.Create(ctx, list); return e })
 	return
 }
 func (s *SingboxService) Update(ctx context.Context, list DomainList) (out *DomainList, err error) {
 	list.Backend = BackendSingbox
-	err = s.mutate(func(core *ServiceImpl) error { var e error; out, e = core.Update(ctx, list); return e })
+	err = s.mutate(ctx, func(core *ServiceImpl) error { var e error; out, e = core.Update(ctx, list); return e })
 	return
 }
 func (s *SingboxService) Delete(ctx context.Context, id string) error {
-	return s.mutate(func(core *ServiceImpl) error { return core.Delete(ctx, id) })
+	return s.mutate(ctx, func(core *ServiceImpl) error { return core.Delete(ctx, id) })
 }
 func (s *SingboxService) DeleteBatch(ctx context.Context, ids []string) (count int, err error) {
-	err = s.mutate(func(core *ServiceImpl) error { var e error; count, e = core.DeleteBatch(ctx, ids); return e })
+	err = s.mutate(ctx, func(core *ServiceImpl) error { var e error; count, e = core.DeleteBatch(ctx, ids); return e })
 	return
 }
 func (s *SingboxService) CreateBatch(ctx context.Context, lists []DomainList) (out []*DomainList, err error) {
 	for i := range lists {
 		lists[i].Backend = BackendSingbox
 	}
-	err = s.mutate(func(core *ServiceImpl) error { var e error; out, e = core.CreateBatch(ctx, lists); return e })
+	err = s.mutate(ctx, func(core *ServiceImpl) error { var e error; out, e = core.CreateBatch(ctx, lists); return e })
 	return
 }
 func (s *SingboxService) SetEnabled(ctx context.Context, id string, enabled bool) error {
-	return s.mutate(func(core *ServiceImpl) error { return core.SetEnabled(ctx, id, enabled) })
+	return s.mutate(ctx, func(core *ServiceImpl) error { return core.SetEnabled(ctx, id, enabled) })
 }
 func (s *SingboxService) RefreshSubscriptions(ctx context.Context, id string) error {
-	return s.mutate(func(core *ServiceImpl) error { return core.RefreshSubscriptions(ctx, id) })
+	return s.mutate(ctx, func(core *ServiceImpl) error { return core.RefreshSubscriptions(ctx, id) })
 }
 func (s *SingboxService) RefreshAllSubscriptions(ctx context.Context) error {
-	return s.mutate(func(core *ServiceImpl) error { return core.RefreshAllSubscriptions(ctx) })
+	return s.mutate(ctx, func(core *ServiceImpl) error { return core.RefreshAllSubscriptions(ctx) })
 }
-func (s *SingboxService) Reconcile(context.Context) error {
+func (s *SingboxService) Reconcile(ctx context.Context) error {
+	if s.operationGate != nil {
+		if err := s.operationGate.LockContext(ctx); err != nil {
+			return err
+		}
+		defer s.operationGate.Unlock()
+	}
 	unlockAWG := s.lockAWGRead()
 	defer unlockAWG()
 	s.mu.Lock()
@@ -343,6 +362,9 @@ func (s *SingboxService) lockAWGRead() func() {
 // ReconcileAWG3Candidate rebuilds dependent routes against candidate while the
 // caller owns the AWG3 write transaction. On success it returns an exact slot
 // rollback closure for a later durable-commit failure.
+// A coordinated caller also owns the outer writer gate throughout this call
+// and its rollback closure; do not re-acquire it here (lock order: writer gate,
+// AWG3 transaction, DNS mutex, orchestrator/heavyop, process mutation gate).
 func (s *SingboxService) ReconcileAWG3Candidate(_ context.Context, candidate []awg3endpoint.Record) (func() error, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

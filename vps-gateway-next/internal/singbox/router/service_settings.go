@@ -21,11 +21,43 @@ func (s *ServiceImpl) ApplyPreset(ctx context.Context, presetID, outboundTag str
 		return err
 	}
 	return s.withConfig(ctx, "status", func(c *RouterConfig) error {
+		if s.portablePresetRuleSets != nil {
+			sets, err := s.portablePresetRuleSets(ctx, p)
+			if err != nil {
+				return err
+			}
+			if len(sets) != len(p.RuleSets) {
+				return fmt.Errorf("preset rule-set resolution is incomplete")
+			}
+			for i, set := range sets {
+				if set.Tag != p.RuleSets[i].Tag || set.Type != "local" || set.Format != "binary" || set.Path == "" {
+					return fmt.Errorf("preset rule-set resolution returned an invalid asset")
+				}
+				found := false
+				for _, existing := range c.Route.RuleSet {
+					if existing.Tag != set.Tag {
+						continue
+					}
+					if existing.Type != set.Type || existing.Format != set.Format || existing.Path != set.Path {
+						return fmt.Errorf("preset rule-set tag conflicts with an existing set")
+					}
+					found = true
+				}
+				if !found {
+					if err := c.AddRuleSet(set); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		return ApplyPresetToConfig(c, p, outboundTag)
 	})
 }
 
 func (s *ServiceImpl) GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error) {
+	if s.portable != nil {
+		return s.portable.GetSettings(ctx)
+	}
 	settings, err := s.deps.Settings.Load()
 	if err != nil {
 		return storage.SingboxRouterSettings{}, err
@@ -34,6 +66,9 @@ func (s *ServiceImpl) GetSettings(ctx context.Context) (storage.SingboxRouterSet
 }
 
 func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRouterSettings) error {
+	if s.portable != nil {
+		return s.portable.UpdateSettings(ctx, sr)
+	}
 	normalized, err := NormalizeSingboxRouterSettings(sr)
 	if err != nil {
 		return err

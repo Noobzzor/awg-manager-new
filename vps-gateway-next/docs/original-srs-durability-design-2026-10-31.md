@@ -1,0 +1,15 @@
+# Portable SRS durability and recovery retention
+
+This implements an existing Task3 prerequisite of the original-manager VPS port. The user delegated technical choices and asked to keep working; no product scope changes are introduced.
+
+Decision: reuse the existing immutable inline materializer and existing orchestrator recovery barrier. Before returning a portable compiled rule-set reference, sync both source and compiled temporary files, publish both immutable names, then strictly sync the inline directory, rule-sets parent and existing config root. Cache hits must also pass this durability check, including retries after a previous failed publication sync. A sync error returns no accepted reference; already published orphan files may remain for a later safe sweep. Existing config-root creation must be made durable by startup integration; this change does not establish that startup ordering.
+
+Garbage collection already takes the same portable writer gate as apply. While the journal owner reports recovery required, skip the entire portable sweep. This retains all possible before/after artifacts without inventing a second pin registry. Normal collection resumes after confirmed recovery clears the barrier. Startup must still recover the journal before constructing/enabling producers or running GC; an unread journal cannot be inferred from an in-memory flag. This is explicitly not completion of startup recovery or policy ownership.
+
+Keep legacy materialization unchanged. Validate with injected file/directory-sync failures, cache-hit failure, legacy compatibility, recovery-blocked collection and ordinary collection after clearing the barrier. Run the existing real compiler/matcher native control with unmocked Linux sync. These prove OS calls and error handling, not an actual power-cut or product AWG traffic.
+
+## Verified checkpoint — 2026-11-06
+
+Portable source and compiled artifacts plus publication directories sync before acceptance, including cached artifacts and retries. Portable GC retains all versions while known journal recovery is unresolved under the shared writer gate. Nine focused controls pass; complete Linux coverage: 8750 qualified passed leaves in 138 packages, group exits [1, 1, 0] only for three known socket-permission tests; all three pass separately with NET_RAW. 45 explicit skips retained. Fresh Linux vet/build, actual Process/sing-box and inline compiler/matcher controls pass. No physical power-cut or product AWG/TUN/VPS acceptance claim. Startup recovery-before-adoption/GC, durable config-root creation, exclusive owner/runtime attestation and original editor integration remain open. Editor capability, frontend, frozen package and VPS unchanged.
+
+Primary behavioral RED: five failed leaves and one preserved legacy control. Controlled publication-sync omission: four failed leaves; implementation restored byte-for-byte. All final verification used the exact paused source. The original 31 October stage was interrupted; 6 November used a fresh bounded stage and new complete verification. Parent Task3 and whole-plan review remain incomplete.

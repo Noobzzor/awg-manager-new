@@ -120,6 +120,9 @@ func (s *ServiceImpl) currentState() (string, error) {
 //
 // Concurrency: serialized by transitionMu (NOT s.mu — Enable/Disable take s.mu).
 func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) error {
+	if s.portable != nil {
+		return s.portable.SwitchRoutingMode(ctx, target)
+	}
 	if !validTransitionTarget(target) {
 		return fmt.Errorf("invalid routing mode %q (want off|tproxy|fakeip-tun|policy-tun)", target)
 	}

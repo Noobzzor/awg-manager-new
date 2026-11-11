@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 )
 
@@ -61,9 +62,10 @@ type ConfigMutator interface {
 
 // Service is the subscription business-logic facade.
 type Service struct {
-	store   *Store
-	mutator ConfigMutator
-	muById  sync.Map // map[string]*sync.Mutex
+	operationGate *heavyop.Gate
+	store         *Store
+	mutator       ConfigMutator
+	muById        sync.Map // map[string]*sync.Mutex
 	// createMu serializes Create across all subscriptions. Allocation
 	// (AllocListenPort / AllocProxyIndex) scans the slot without reserving,
 	// so two concurrent Creates would hand out the same listen_port / ProxyN
@@ -99,6 +101,20 @@ type Service struct {
 	// happKeys — RSA-ключи расшифровки happ://crypt… ссылок. Живут рядом с
 	// файлом подписок, состояние принадлежит сервису, не пакету.
 	happKeys *happKeys
+}
+
+// SetOperationCoordinator is initialization-only. It is the dedicated outer
+// local writer gate, independent from heavyop.Default and the adapter batch.
+func (s *Service) SetOperationCoordinator(gate *heavyop.Gate) { s.operationGate = gate }
+
+func (s *Service) acquireOperation(ctx context.Context) (func(), error) {
+	if s.operationGate == nil {
+		return func() {}, nil
+	}
+	if err := s.operationGate.LockContext(ctx); err != nil {
+		return nil, err
+	}
+	return s.operationGate.Unlock, nil
 }
 
 func NewService(store *Store, mutator ConfigMutator) *Service {
@@ -145,6 +161,11 @@ func (s *Service) proxyEnabled() bool {
 // is not reliably processed last. Within pass 2 each proxy is committed via
 // EnsureProxy before the next index is allocated, for the same reason.
 func (s *Service) SyncProxies(ctx context.Context) error {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	if !s.proxyEnabled() {
 		return nil
 	}
@@ -236,6 +257,11 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 // recovery is needed; this is the only lossless source available when the
 // materialized slot itself is gone.
 func (s *Service) Reconcile(ctx context.Context) error {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	if s.store == nil || s.mutator == nil {
 		return nil
 	}
@@ -342,6 +368,11 @@ func (s *Service) lockSub(id string) *sync.Mutex {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	source := "url"
 	if in.Inline != "" {
 		source = "inline"
@@ -465,6 +496,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 }
 
 func (s *Service) Refresh(ctx context.Context, id string) (*RefreshResult, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	mu := s.lockSub(id)
 	mu.Lock()
 	defer mu.Unlock()
@@ -886,6 +922,11 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 // drifted; the subscription row still gets removed from storage so the user
 // is not stuck with an undeletable entry.
 func (s *Service) Delete(ctx context.Context, id string) error {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	mu := s.lockSub(id)
 	mu.Lock()
 	defer mu.Unlock()
@@ -999,6 +1040,17 @@ func (s *Service) ListActiveMemberTags() []string {
 func (s *Service) List() []Subscription                 { return s.store.List() }
 func (s *Service) Get(id string) (*Subscription, error) { return s.store.Get(id) }
 func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
+	return s.UpdateContext(context.Background(), id, patch)
+}
+
+// UpdateContext cancels queued admission using the request context. Once
+// admitted, the original update/rollback body retains its existing semantics.
+func (s *Service) UpdateContext(ctx context.Context, id string, patch UpdatePatch) (*Subscription, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	mu := s.lockSub(id)
 	mu.Lock()
 	defer mu.Unlock()
@@ -1211,6 +1263,11 @@ var ErrActiveMemberOnURLTest = errors.New("subscription: SetActiveMember not sup
 // member in the store, then hits the Clash API for an instant runtime switch
 // — no SIGHUP, no connection drop.
 func (s *Service) SetActiveMember(ctx context.Context, id, memberTag string) error {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	s.logInfo("subscription-active-member", id, "set requested: "+memberTag)
 	mu := s.lockSub(id)
 	mu.Lock()
@@ -1308,6 +1365,11 @@ var ErrMemberNotFound = errors.New("subscription: member not found")
 // on urltest-mode subs it joins the auto-test pool. Active member is
 // preserved (caller chooses whether to switch).
 func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*Subscription, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	s.logInfo("subscription-member-add", id, "add requested")
 	mu := s.lockSub(id)
 	mu.Lock()
@@ -1443,6 +1505,11 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 // Returns (nil, nil) when the subscription was deleted (last-member case);
 // returns (updatedSub, nil) otherwise.
 func (s *Service) RemoveMember(ctx context.Context, id, memberTag string) (*Subscription, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	s.logInfo("subscription-member-remove", id, "remove requested: "+memberTag)
 	mu := s.lockSub(id)
 	mu.Lock()
@@ -1537,6 +1604,11 @@ func (s *Service) RemoveMember(ctx context.Context, id, memberTag string) (*Subs
 // снимает их outbounds, переносит в ExcludedTags/ExcludedMembers. Обратимо
 // через RestoreMembers. Только для URL-подписок.
 func (s *Service) ExcludeMembers(ctx context.Context, id string, tags []string) (*Subscription, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	mu := s.lockSub(id)
 	mu.Lock()
 	defer mu.Unlock()
@@ -1615,6 +1687,11 @@ func (s *Service) ExcludeMembers(ctx context.Context, id string, tags []string) 
 // RestoreMembers убирает теги из ExcludedTags и запускает refresh — вернувшиеся
 // серверы материализуются. Стоимость = один обычный refresh (редкая операция).
 func (s *Service) RestoreMembers(ctx context.Context, id string, tags []string) (*Subscription, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	mu := s.lockSub(id)
 	mu.Lock()
 	defer mu.Unlock()
@@ -1891,6 +1968,11 @@ var ErrInfoItemNotFound = errors.New("subscription: info item not found")
 
 // MoveRejectedToInfo promotes one rejected entry to the pinned info block (user source).
 func (s *Service) MoveRejectedToInfo(ctx context.Context, id, memberTag string) (*Subscription, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	s.logInfo("subscription-rejected-to-info", id, "move requested: "+memberTag)
 	mu := s.lockSub(id)
 	mu.Lock()
@@ -1935,6 +2017,11 @@ func (s *Service) MoveRejectedToInfo(ctx context.Context, id, memberTag string) 
 
 // RemoveInfoItem moves a provider info line to rejectedMembers; refresh won't re-add it to info.
 func (s *Service) RemoveInfoItem(ctx context.Context, id, itemID string) (*Subscription, error) {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer releaseOperation()
 	s.logInfo("subscription-info-remove", id, "remove requested: "+itemID)
 	mu := s.lockSub(id)
 	mu.Lock()
@@ -1948,6 +2035,11 @@ func (s *Service) RemoveInfoItem(ctx context.Context, id, itemID string) (*Subsc
 // DeleteOrphans removes orphan-flagged outbounds from sing-box config and
 // clears the OrphanTags slice in the store.
 func (s *Service) DeleteOrphans(ctx context.Context, id string) error {
+	releaseOperation, operationErr := s.acquireOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer releaseOperation()
 	s.logInfo("subscription-orphans-delete", id, "delete requested")
 	mu := s.lockSub(id)
 	mu.Lock()

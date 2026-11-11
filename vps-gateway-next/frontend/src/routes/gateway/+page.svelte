@@ -7,6 +7,7 @@
 	type PageState = 'loading' | 'disabled' | 'ready' | 'error';
 
 	let pageState = $state<PageState>('loading');
+	let clientOnly = $state(false);
 	let clients = $state<GatewayClient[]>([]);
 	let loadingClients = $state(false);
 	let errorMessage = $state('');
@@ -136,7 +137,12 @@
 				return;
 			}
 			pageState = 'ready';
-			await Promise.all([loadClients(), loadSubscriptions(), loadGroups(), loadPolicyProfiles(), loadPolicyOutbounds()]);
+			clientOnly = capabilities.gatewayClientOnly === true;
+			if (clientOnly) {
+				await loadClients();
+			} else {
+				await Promise.all([loadClients(), loadSubscriptions(), loadGroups(), loadPolicyProfiles(), loadPolicyOutbounds()]);
+			}
 		} catch (error) {
 			pageState = 'error';
 			errorMessage = error instanceof Error ? error.message : 'Не удалось проверить режим gateway';
@@ -177,7 +183,7 @@
 			revokeTarget = null;
 			clearProfile();
 			await loadClients();
-			await loadSubscriptions();
+			if (!clientOnly) await loadSubscriptions();
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : 'Не удалось изменить состояние клиента';
 		} finally {
@@ -652,6 +658,7 @@
 			</form>
 		</section>
 
+		{#if !clientOnly}
 		<section class="panel subscriptions-panel" aria-labelledby="subscriptions-title">
 			<div class="panel-heading">
 				<div>
@@ -903,6 +910,8 @@
 			</ul>
 		</section>
 
+		{/if}
+
 		<section class="clients-section" aria-labelledby="clients-title">
 			<div class="section-heading">
 				<div>
@@ -950,6 +959,7 @@
 			{/if}
 		</section>
 
+		{#if !clientOnly}
 		<section class="panel groups-panel" aria-labelledby="groups-title">
 			<div class="panel-heading">
 				<div>
@@ -1041,6 +1051,7 @@
 				</div>
 			{/if}
 		</section>
+		{/if}
 	{/if}
 </PageContainer>
 

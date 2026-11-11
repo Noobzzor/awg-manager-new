@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -83,6 +84,7 @@ func (h *SubscriptionHandler) respondServiceError(w http.ResponseWriter, action 
 	// внутренних сбоев (default → 500).
 	var filterErr *subscription.FilterError
 	isInternal := !errors.As(err, &filterErr) &&
+		!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
 		!errors.Is(err, subscription.ErrValidation) &&
 		!errors.Is(err, subscription.ErrExcludeOnInline) &&
 		!errors.Is(err, subscription.ErrAllMembersExcluded) &&
@@ -94,6 +96,8 @@ func (h *SubscriptionHandler) respondServiceError(w http.ResponseWriter, action 
 		h.log.Debug(action, "", err.Error())
 	}
 	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		response.ErrorWithStatus(w, http.StatusRequestTimeout, "Request cancelled or timed out", "REQUEST_CANCELLED")
 	case errors.As(err, &filterErr):
 		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_FILTER")
 	case errors.Is(err, subscription.ErrValidation):
@@ -282,7 +286,7 @@ func (h *SubscriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.URLTest != nil {
 		patch.URLTest = urlTestDTOToConfig(req.URLTest)
 	}
-	sub, err := h.svc.Update(id, patch)
+	sub, err := h.svc.UpdateContext(r.Context(), id, patch)
 	if err != nil {
 		h.respondServiceError(w, "subscription-update", err)
 		return

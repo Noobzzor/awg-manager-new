@@ -25,6 +25,7 @@
 		inlineSbCheck = null;
 		try {
 			await api.singboxRouterStagingApply();
+			await singboxRouter.loadStaging();
 		} catch (e: unknown) {
 			const err = e as { status?: number; body?: RouterStagingValidationError };
 			if (err.status === 422 && err.body?.validation) {

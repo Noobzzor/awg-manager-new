@@ -27,11 +27,21 @@ type ProcessController interface {
 	Reload() error
 }
 
+// OperationCoordinator admits ordinary lifecycle operations after complete
+// config-producer transactions. The shared local heavyop.Gate implements it.
+type OperationCoordinator interface {
+	LockContext(context.Context) error
+	Unlock()
+}
+
 // Orchestrator is the single writer for sing-box config.d. See package
 // doc. Safe for concurrent use by registered producers.
 type Orchestrator struct {
-	configDir string
-	proc      ProcessController
+	operationCoordinator  OperationCoordinator
+	reloadAdmissionCtx    context.Context
+	cancelReloadAdmission context.CancelFunc
+	configDir             string
+	proc                  ProcessController
 
 	// appliedPath is where Reload persists the applied-state breadcrumb
 	// ({hash, hasTun} of the config last applied to sing-box). Captured
@@ -68,8 +78,9 @@ type Orchestrator struct {
 	// помечается в pendingReload и применяется одним reload'ом на release.
 	// ReloadNow под hold НЕ подавляется: он явный и сам применяет всё
 	// накопленное, поэтому сбрасывает pendingReload.
-	holds         int
-	pendingReload bool
+	holds                   int
+	pendingReload           bool
+	runtimeRecoveryRequired bool // guarded by mu; explicit journal owner controls it
 
 	// prevHasTun records whether the LAST applied config had a tun
 	// inbound. Reload compares it against the new config's tun presence:
@@ -98,6 +109,12 @@ type Orchestrator struct {
 	// don't resurrect the daemon. SIGHUP (already running) and stop
 	// transitions remain unaffected.
 	shouldRun func() bool
+}
+
+// SetOperationCoordinator is initialization-only; use the same outer writer
+// coordinator as all local producers and the journaled apply owner.
+func (o *Orchestrator) SetOperationCoordinator(coordinator OperationCoordinator) {
+	o.operationCoordinator = coordinator
 }
 
 // SetLogger registers a sink for orchestrator-level log lines.
@@ -502,9 +519,15 @@ func (o *Orchestrator) saveLocked(slot Slot, jsonBytes []byte) error {
 // callback всё равно доходил до Reload уже под hold'ом.
 func (o *Orchestrator) HoldReloads() func() {
 	o.mu.Lock()
-	o.holds++
+	release := o.holdReloadsLocked()
 	o.mu.Unlock()
+	return release
+}
 
+// Caller holds o.mu. Runtime transactions use this to check owner shutdown
+// and establish the hold atomically with respect to Close.
+func (o *Orchestrator) holdReloadsLocked() func() {
+	o.holds++
 	var once sync.Once
 	return func() {
 		once.Do(func() {
@@ -551,13 +574,16 @@ func (o *Orchestrator) SnapshotSlot(slot Slot) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("snapshot %s active: %w", slot, err)
 	}
 	if data != nil {
-		return append([]byte(nil), data...), true, nil
+		return append([]byte{}, data...), true, nil
 	}
 	data, err = readIfExists(o.disabledPath(meta))
 	if err != nil {
 		return nil, false, fmt.Errorf("snapshot %s disabled: %w", slot, err)
 	}
-	return append([]byte(nil), data...), false, nil
+	if data == nil {
+		return nil, false, nil
+	}
+	return append([]byte{}, data...), false, nil
 }
 
 // RestoreSlot restores trusted previously-applied bytes and enabled state.

@@ -1,6 +1,7 @@
 import type { DnsRouteBackend } from './dnsRouteBackend';
 
 export interface RuntimeCapabilities {
+	gatewayClientOnly?: boolean;
 	singboxStatus: boolean;
 	awg3: boolean;
 	singboxConfigEditor: boolean;

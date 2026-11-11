@@ -92,6 +92,11 @@ func main() {
 	}
 	var serveErr error
 	err = runWithCleanup(func() error {
+		if mode == deploymentModeSingbox {
+			if err := a.prepareLocalPolicyOwner(); err != nil {
+				return err
+			}
+		}
 		if err := runComposition(mode, compositionHooks{
 			core:           a.setupCore,
 			ndms:           a.setupNDMS,

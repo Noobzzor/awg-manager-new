@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	gatewaypolicy "github.com/hoaxisr/awg-manager/internal/gateway/policy"
+	"github.com/hoaxisr/awg-manager/internal/gateway/routerpolicy"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -23,13 +25,14 @@ import (
 // singboxCoreDeps — всё, что нужно ядру sing-box-рантайма и что обязан
 // предоставить вызывающий (демон или cleanup).
 type singboxCoreDeps struct {
-	queries  *ndmsquery.Queries
-	commands *ndmscommand.Commands
-	settings *storage.SettingsStore // источник замыканий OperatorDeps
-	appLog   *logging.Service       // AppLogger + логгер оркестратора
-	bus      *events.Bus
-	bootLog  *logging.ScopedLogger
-	dataDir  string // awg3.json
+	operationCoordinator singboxorch.OperationCoordinator
+	queries              *ndmsquery.Queries
+	commands             *ndmscommand.Commands
+	settings             *storage.SettingsStore // источник замыканий OperatorDeps
+	appLog               *logging.Service       // AppLogger + логгер оркестратора
+	bus                  *events.Bus
+	bootLog              *logging.ScopedLogger
+	dataDir              string // awg3.json
 	// dir — каталог управляемого sing-box; пусто = дефолт оператора
 	// (каталог рядом с бинарём).
 	dir       string
@@ -56,6 +59,11 @@ type singboxCore struct {
 // оператор, оркестратор config.d со всеми слотами и store импортированных
 // AWG3-endpoint'ов.
 func buildSingboxCore(d singboxCoreDeps) (singboxCore, error) {
+	if d.disableNDMSProxy {
+		if err := routerpolicy.RequireGatewayOwner(context.Background(), d.dataDir); err != nil {
+			return singboxCore{}, fmt.Errorf("legacy local startup ownership preflight: %w", err)
+		}
+	}
 	// NewOperator reconciles files, and the legacy migrations below rewrite
 	// all three state locations. Validate before any of those side effects.
 	if err := singboxorch.ValidateStateDirectories(singbox.EffectiveConfigDir(d.dir, d.configDir)); err != nil {
@@ -67,18 +75,19 @@ func buildSingboxCore(d singboxCoreDeps) (singboxCore, error) {
 	}
 	// Sing-box integration
 	op := singbox.NewOperator(singbox.OperatorDeps{
-		Log:               slog.Default().With("component", "singbox"),
-		Dir:               d.dir,
-		ConfigDir:         d.configDir,
-		Binary:            d.binary,
-		DisableNDMSProxy:  d.disableNDMSProxy,
-		Queries:           d.queries,
-		Commands:          d.commands,
-		AppLogger:         d.appLog,
-		SingboxLogLevel:   d.settings.GetSingboxLogLevel,
-		BootstrapDNS:      d.settings.GetSingboxBootstrapDNS,
-		ClashPort:         d.settings.GetSingboxClashPort,
-		CacheFileLocation: d.settings.GetSingboxCacheFileLocation,
+		OperationCoordinator: d.operationCoordinator,
+		Log:                  slog.Default().With("component", "singbox"),
+		Dir:                  d.dir,
+		ConfigDir:            d.configDir,
+		Binary:               d.binary,
+		DisableNDMSProxy:     d.disableNDMSProxy,
+		Queries:              d.queries,
+		Commands:             d.commands,
+		AppLogger:            d.appLog,
+		SingboxLogLevel:      d.settings.GetSingboxLogLevel,
+		BootstrapDNS:         d.settings.GetSingboxBootstrapDNS,
+		ClashPort:            d.settings.GetSingboxClashPort,
+		CacheFileLocation:    d.settings.GetSingboxCacheFileLocation,
 		// Seed the sticky-stop flag from disk so the watchdog respects
 		// a user-pressed Stop across awgm restarts. SetManuallyStopped
 		// writes the new intent back through a single-field updater so
@@ -115,6 +124,7 @@ func buildSingboxCore(d singboxCoreDeps) (singboxCore, error) {
 		d.bootLog.Warn("address-or-migration", "", err.Error())
 	}
 	orch := singboxorch.New(singboxConfigDir, op.Process())
+	orch.SetOperationCoordinator(d.operationCoordinator)
 	orch.SetLogger(func(level, msg string) {
 		switch level {
 		case "warn":

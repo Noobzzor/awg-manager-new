@@ -31,6 +31,9 @@ func (s *ServiceImpl) RenameExternalOutboundTag(ctx context.Context, oldTag, new
 	if oldTag == "" || newTag == "" || oldTag == newTag {
 		return nil
 	}
+	if s.portable != nil {
+		return s.portable.RenameExternalOutboundTag(ctx, oldTag, newTag)
+	}
 	// Settings-side references: QoS classes route to outbound tags too and
 	// must follow the rename (config-side rewrites below don't see them).
 	if err := s.renameQoSClassOutbound(oldTag, newTag); err != nil {

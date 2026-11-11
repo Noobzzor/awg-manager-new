@@ -33,6 +33,7 @@ export function buildOutboundOptions(
 	const managed = tags.filter((t) => t.kind === 'managed');
 	const system = tags.filter((t) => t.kind === 'system');
 	const awg3 = tags.filter((t) => t.kind === 'awg3');
+	const warp = tags.filter((t) => t.kind === 'warp');
 
 	if (managed.length > 0) {
 		groups.push({
@@ -63,6 +64,13 @@ export function buildOutboundOptions(
 				// когда iface непустой, иначе label остаётся без «(…)».
 				label: t.iface ? `${t.label} (${t.iface})` : t.label,
 			})),
+		});
+	}
+
+	if (warp.length > 0) {
+		groups.push({
+			group: 'WARP',
+			items: warp.map((t) => ({ value: t.tag, label: t.label })),
 		});
 	}
 

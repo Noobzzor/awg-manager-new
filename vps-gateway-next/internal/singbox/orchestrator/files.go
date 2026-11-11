@@ -89,6 +89,33 @@ func writeAtomic(path string, data []byte) error {
 	return storage.AtomicWritePerm(path, data, storage.SecretFilePermission)
 }
 
+// SyncRuntimeState makes slot rename/removal metadata durable before a
+// transaction may clear its recovery journal. Slot contents are already
+// fsynced by writeAtomic; its directory sync is otherwise best effort.
+// Caller coordinates writers and holds a runtime lease across the transaction.
+func (o *Orchestrator) SyncRuntimeState() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := ValidateStateDirectories(o.configDir); err != nil {
+		return err
+	}
+	for _, dir := range []string{filepath.Join(o.configDir, disabledSubdir), o.configDir} {
+		f, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		err = f.Sync()
+		closeErr := f.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
 // fileExists returns true iff path exists and is a regular file.
 func fileExists(path string) bool {
 	info, err := os.Stat(path)

@@ -19,6 +19,9 @@ type StagingStatus struct {
 // current cross-slot diagnostic so the UI can render a preview of "what
 // Apply would say".
 func (s *ServiceImpl) StagingStatus(ctx context.Context) StagingStatus {
+	if s.portable != nil {
+		return s.portable.StagingStatus(ctx)
+	}
 	info := s.deps.Orch.DraftInfo(orchestrator.SlotRouter)
 	st := StagingStatus{HasDraft: info.HasDraft, DraftedAt: info.DraftedAt}
 	if !info.HasDraft {
@@ -37,7 +40,13 @@ func (s *ServiceImpl) StagingStatus(ctx context.Context) StagingStatus {
 // success it emits "singbox.router.staging" + "singbox.router.rules" SSE
 // invalidations.
 func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error) {
-	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
+	var res orchestrator.ValidationResult
+	var err error
+	if s.portable != nil {
+		res, err = s.portable.ApplyStaging(ctx)
+	} else {
+		res, err = s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
+	}
 	if err == nil && res.Ok() {
 		// A staged rule-set delete/rename is final now — reap the orphaned
 		// inline/dat artifacts (issue #448: files were never deleted).
@@ -50,10 +59,26 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 
 // DiscardStaging removes the pending draft for the router slot.
 func (s *ServiceImpl) DiscardStaging(ctx context.Context) error {
-	if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouter); err != nil {
-		return err
-	}
-	if err := s.restoreEffectiveRuleSetArtifacts(); err != nil {
+	err := func() error {
+		if s.portableGuard != nil {
+			s.portableGuard.Lock()
+			defer s.portableGuard.Unlock()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if s.portableDocuments != nil {
+			if err := s.portableDocuments.DiscardDraft(); err != nil {
+				return err
+			}
+		} else {
+			if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouter); err != nil {
+				return err
+			}
+		}
+		return s.restoreEffectiveRuleSetArtifacts()
+	}()
+	if err != nil {
 		return err
 	}
 	s.emitStagingEvent("discarded")

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -142,6 +143,10 @@ func (h *SubscriptionHandler) toSubscriptionGroupDTO(g subscription.AggregateGro
 // respondGroupServiceError маппит ошибки Group-CRUD на HTTP-статусы
 // и журналит сбой мутации.
 func (h *SubscriptionHandler) respondGroupServiceError(w http.ResponseWriter, action string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		h.respondServiceError(w, action, err)
+		return
+	}
 	// См. respondServiceError: клиентские 4xx — Debug, внутренние — Warn.
 	var filterErr *subscription.FilterError
 	isInternal := !errors.As(err, &filterErr) &&

@@ -74,75 +74,77 @@ type Config struct {
 
 // Server is the HTTP server for awg-manager.
 type Server struct {
-	config                     Config
-	localMode                  bool
-	localAuthHandler           *api.AuthHandler
-	localSettingsHandler       *api.SettingsHandler
-	localSingboxStatus         SingboxStatusProvider
-	localSingboxStatusHandler  http.HandlerFunc
-	localDNSRouteHandler       *api.DNSRouteHandler
-	localDNSRouteBackend       string
-	localRoutingTunnels        http.HandlerFunc
-	localRoutingRefresh        http.HandlerFunc
-	localGateway               http.Handler
-	appLog                     *logging.ScopedLogger
-	tunnelService              api.TunnelService
-	externalService            api.ExternalTunnelService
-	testingService             *testing.Service
-	keenetic                   *auth.KeeneticClient
-	sessions                   *auth.SessionStore
-	settings                   *storage.SettingsStore
-	tunnels                    *storage.AWGTunnelStore
-	pingCheckService           api.PingCheckService
-	proxyRecords               api.ProxyRecordLister
-	loggingService             *logging.Service
-	kmodLoader                 *kmod.Loader
-	opkgTunOccupancy           storage.OpkgTunPins
-	updaterService             *updater.Service
-	ndmsQueries                *ndmsquery.Queries
-	ndmsCommands               *ndmscommand.Commands
-	trafficHistory             *traffic.History
-	dnsRouteService            api.DNSRouteService
-	staticRouteService         api.StaticRouteService
-	systemTunnelService        systemtunnel.Service
-	managedService             managed.ManagedServerService
-	managedServiceImpl         *managed.Service
-	nwgOp                      *nwg.OperatorNativeWG
-	terminalManager            terminal.Manager
-	accessPolicyService        accesspolicy.Service
-	clientRouteService         clientroute.Service
-	catalog                    routing.Catalog
-	hydraService               *hydraroute.Service
-	orch                       *orchestrator.Orchestrator
-	bus                        *events.Bus
-	exposureGuard              *api.ExposureGuard
-	exposureGuardStop          context.CancelFunc
-	singboxHandler             *api.SingboxHandler
-	singboxConnsHandler        *api.SingboxConnectionsHandler
-	singboxRouterHandler       *api.SingboxRouterHandler
-	connectionsMarkProvider    func(context.Context) (string, bool)
-	singboxFakeIPConfigHandler *api.SingboxFakeIPConfigHandler
-	singboxConfigHandler       *api.SingboxConfigHandler
-	singboxConfigEditorHandler *api.SingboxConfigEditorHandler
-	singboxInboundsHandler     *api.SingboxInboundsHandler
-	singboxProxiesHandler      *api.SingboxProxiesHandler
-	bypassSetHandler           *api.BypassSetHandler
-	awgOutboundsHandler        *api.AWGOutboundsHandler
-	subscriptionHandler        *api.SubscriptionHandler
-	dnsRewritesHandler         *api.DNSRewritesHandler
-	awg3Handler                *api.Awg3Handler
-	clashProxy                 *api.ClashProxy
-	singboxOp                  *singbox.Operator
-	singboxOrch                *singboxorch.Orchestrator
-	presetCatalog              *presets.Catalog
-	deviceProxySvc             *deviceproxy.Service
-	downloadSvc                *downloader.Service
-	monitoringService          *monitoring.Service
-	singboxSubMembersFn        func() []diagnostics.SingboxSubMember
-	singboxConfigPreviewFn     func() (string, error)
-	dnsCheckService            *dnscheck.Service
-	authMiddleware             *auth.Middleware
-	mcpKeys                    *storage.McpKeyStore
+	config                      Config
+	localMode                   bool
+	localAuthHandler            *api.AuthHandler
+	localSettingsHandler        *api.SettingsHandler
+	localOriginalBrowserPreview bool
+	localSingboxStatus          SingboxStatusProvider
+	localSingboxStatusHandler   http.HandlerFunc
+	localDNSRouteHandler        *api.DNSRouteHandler
+	localDNSRouteBackend        string
+	localRoutingTunnels         http.HandlerFunc
+	localRoutingRefresh         http.HandlerFunc
+	localGateway                http.Handler
+	appLog                      *logging.ScopedLogger
+	tunnelService               api.TunnelService
+	externalService             api.ExternalTunnelService
+	testingService              *testing.Service
+	keenetic                    *auth.KeeneticClient
+	sessions                    *auth.SessionStore
+	settings                    *storage.SettingsStore
+	tunnels                     *storage.AWGTunnelStore
+	pingCheckService            api.PingCheckService
+	proxyRecords                api.ProxyRecordLister
+	loggingService              *logging.Service
+	kmodLoader                  *kmod.Loader
+	opkgTunOccupancy            storage.OpkgTunPins
+	updaterService              *updater.Service
+	ndmsQueries                 *ndmsquery.Queries
+	ndmsCommands                *ndmscommand.Commands
+	trafficHistory              *traffic.History
+	dnsRouteService             api.DNSRouteService
+	staticRouteService          api.StaticRouteService
+	systemTunnelService         systemtunnel.Service
+	managedService              managed.ManagedServerService
+	managedServiceImpl          *managed.Service
+	nwgOp                       *nwg.OperatorNativeWG
+	terminalManager             terminal.Manager
+	accessPolicyService         accesspolicy.Service
+	clientRouteService          clientroute.Service
+	catalog                     routing.Catalog
+	hydraService                *hydraroute.Service
+	orch                        *orchestrator.Orchestrator
+	bus                         *events.Bus
+	exposureGuard               *api.ExposureGuard
+	exposureGuardStop           context.CancelFunc
+	singboxHandler              *api.SingboxHandler
+	singboxConnsHandler         *api.SingboxConnectionsHandler
+	singboxRouterHandler        *api.SingboxRouterHandler
+	localRequestAllowed         func(*http.Request) bool
+	connectionsMarkProvider     func(context.Context) (string, bool)
+	singboxFakeIPConfigHandler  *api.SingboxFakeIPConfigHandler
+	singboxConfigHandler        *api.SingboxConfigHandler
+	singboxConfigEditorHandler  *api.SingboxConfigEditorHandler
+	singboxInboundsHandler      *api.SingboxInboundsHandler
+	singboxProxiesHandler       *api.SingboxProxiesHandler
+	bypassSetHandler            *api.BypassSetHandler
+	awgOutboundsHandler         *api.AWGOutboundsHandler
+	subscriptionHandler         *api.SubscriptionHandler
+	dnsRewritesHandler          *api.DNSRewritesHandler
+	awg3Handler                 *api.Awg3Handler
+	clashProxy                  *api.ClashProxy
+	singboxOp                   *singbox.Operator
+	singboxOrch                 *singboxorch.Orchestrator
+	presetCatalog               *presets.Catalog
+	deviceProxySvc              *deviceproxy.Service
+	downloadSvc                 *downloader.Service
+	monitoringService           *monitoring.Service
+	singboxSubMembersFn         func() []diagnostics.SingboxSubMember
+	singboxConfigPreviewFn      func() (string, error)
+	dnsCheckService             *dnscheck.Service
+	authMiddleware              *auth.Middleware
+	mcpKeys                     *storage.McpKeyStore
 	// mcpCalls is cancelled by Shutdown so in-flight MCP tool calls stop
 	// instead of holding httpServer.Shutdown for their full grace period.
 	mcpCalls       context.Context
@@ -275,6 +277,9 @@ type LocalDeps struct {
 	Common  CommonCapabilities
 	Singbox SingboxCapabilities
 	Routing RoutingCapabilities
+	// RequestAllowed limits an experimental local composition before dispatch.
+	RequestAllowed         func(*http.Request) bool
+	OriginalBrowserPreview bool
 }
 
 // authLoggerAdapter narrows ScopedLogger to the AuthLogger interface
@@ -352,26 +357,28 @@ func NewLocal(cfg Config, deps LocalDeps) *Server {
 	appLog := logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubHTTP)
 	localAuth := api.NewLocalAuthHandler(deps.Common.Sessions, deps.Common.Settings, appLogger)
 	return &Server{
-		config:                    cfg,
-		localMode:                 true,
-		localAuthHandler:          localAuth,
-		localSettingsHandler:      deps.Common.SettingsHandler,
-		appLog:                    appLog,
-		settings:                  deps.Common.Settings,
-		sessions:                  deps.Common.Sessions,
-		loggingService:            deps.Common.LoggingService,
-		bus:                       deps.Common.Bus,
-		authMiddleware:            auth.NewMiddleware(deps.Common.Sessions, deps.Common.Settings, &authLoggerAdapter{log: appLog}),
-		localSingboxStatus:        deps.Singbox.Status,
-		localSingboxStatusHandler: deps.Singbox.StatusHandler,
-		localDNSRouteHandler:      deps.Routing.DNSRoutes,
-		localDNSRouteBackend:      deps.Routing.DNSRouteBackend,
-		localRoutingTunnels:       deps.Routing.Tunnels,
-		localRoutingRefresh:       deps.Routing.Refresh,
-		localGateway:              deps.Routing.Gateway,
-		singboxHandler:            deps.Singbox.Handler,
-		awg3Handler:               deps.Singbox.Awg3Handler,
-		instanceID:                id,
+		config:                      cfg,
+		localMode:                   true,
+		localRequestAllowed:         deps.RequestAllowed,
+		localAuthHandler:            localAuth,
+		localSettingsHandler:        deps.Common.SettingsHandler,
+		appLog:                      appLog,
+		settings:                    deps.Common.Settings,
+		sessions:                    deps.Common.Sessions,
+		loggingService:              deps.Common.LoggingService,
+		bus:                         deps.Common.Bus,
+		authMiddleware:              auth.NewMiddleware(deps.Common.Sessions, deps.Common.Settings, &authLoggerAdapter{log: appLog}),
+		localOriginalBrowserPreview: deps.OriginalBrowserPreview,
+		localSingboxStatus:          deps.Singbox.Status,
+		localSingboxStatusHandler:   deps.Singbox.StatusHandler,
+		localDNSRouteHandler:        deps.Routing.DNSRoutes,
+		localDNSRouteBackend:        deps.Routing.DNSRouteBackend,
+		localRoutingTunnels:         deps.Routing.Tunnels,
+		localRoutingRefresh:         deps.Routing.Refresh,
+		localGateway:                deps.Routing.Gateway,
+		singboxHandler:              deps.Singbox.Handler,
+		awg3Handler:                 deps.Singbox.Awg3Handler,
+		instanceID:                  id,
 	}
 }
 
@@ -641,6 +648,16 @@ func (s *Server) Start() error {
 	}
 
 	core := http.Handler(mux)
+	if allowed := s.localRequestAllowed; allowed != nil {
+		next := core
+		core = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !allowed(r) {
+				http.Error(w, "Operation unavailable in this local mode", http.StatusNotImplemented)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 	if s.config.SlowRequestThreshold > 0 {
 		core = s.slowRequestMiddleware(s.config.SlowRequestThreshold, core)
 	}

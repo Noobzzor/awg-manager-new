@@ -124,13 +124,14 @@ func (s *Server) registerLocalRoutes(mux *http.ServeMux) {
 			"proxyInbound":        false,
 			"logs":                false,
 			"ndms":                false,
-			"singboxRouter":       false,
+			"singboxRouter":       s.localOriginalBrowserPreview && s.singboxRouterHandler != nil,
 			"hydraroute":          false,
 			"tunnelDiagnostics":   false,
 			"updates":             false,
 			"daemonRestart":       false,
 			"ndmsProxy":           false,
 			"gateway":             s.localGateway != nil,
+			"gatewayClientOnly":   s.localOriginalBrowserPreview && s.localGateway != nil,
 		})
 	}))
 	// The portable backend has no Keenetic system-info provider, but the SPA
@@ -390,6 +391,14 @@ func (s *Server) registerLocalRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/subscriptions/groups/create", h.guarded(sh.CreateGroup))
 		mux.HandleFunc("/api/singbox/subscriptions/groups/update", h.guarded(sh.UpdateGroup))
 		mux.HandleFunc("/api/singbox/subscriptions/groups/delete", h.guarded(sh.DeleteGroup))
+	}
+	s.registerPresetRoutes(mux, h)
+	s.registerSingboxRouterRoutes(mux, h)
+	if s.localOriginalBrowserPreview && s.awgOutboundsHandler != nil {
+		mux.HandleFunc("/api/singbox/awg-outbounds/tags", h.guarded(s.awgOutboundsHandler.ServeHTTP))
+	}
+	if s.localOriginalBrowserPreview && s.dnsRewritesHandler != nil {
+		mux.HandleFunc("/api/singbox/router/dns/rewrites/list", h.guarded(s.dnsRewritesHandler.List))
 	}
 	if s.config.FrontendFS != nil {
 		mux.Handle("/", spaHandler(s.config.FrontendFS))
@@ -1213,81 +1222,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/connections/clients", h.guarded(s.singboxConnsHandler.Clients))
 	}
 
-	if s.singboxRouterHandler != nil {
-		rh := s.singboxRouterHandler
-		mux.HandleFunc("/api/singbox/router/status", h.guarded(rh.GetStatus))
-		mux.HandleFunc("/api/singbox/router/mode", h.guarded(rh.SwitchMode))
-		mux.HandleFunc("/api/singbox/router/settings", h.guarded(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodGet {
-				rh.GetSettings(w, r)
-			} else {
-				rh.PutSettings(w, r)
-			}
-		}))
-		mux.HandleFunc("/api/singbox/router/rules/list", h.guarded(rh.ListRules))
-		mux.HandleFunc("/api/singbox/router/rules/add", h.guarded(rh.AddRule))
-		mux.HandleFunc("/api/singbox/router/rules/update", h.guarded(rh.UpdateRule))
-		mux.HandleFunc("/api/singbox/router/rules/bulk-outbound", h.guarded(rh.BulkSetRuleOutbound))
-		mux.HandleFunc("/api/singbox/router/rules/delete", h.guarded(rh.DeleteRule))
-		mux.HandleFunc("/api/singbox/router/rules/move", h.guarded(rh.MoveRule))
-		mux.HandleFunc("/api/singbox/router/rulesets/list", h.guarded(rh.ListRuleSets))
-		mux.HandleFunc("/api/singbox/router/rulesets/add", h.guarded(rh.AddRuleSet))
-		mux.HandleFunc("/api/singbox/router/rulesets/update", h.guarded(rh.UpdateRuleSet))
-		mux.HandleFunc("/api/singbox/router/rulesets/bulk-detour", h.guarded(rh.BulkSetRuleSetDetour))
-		mux.HandleFunc("/api/singbox/router/rulesets/delete", h.guarded(rh.DeleteRuleSet))
-		mux.HandleFunc("/api/singbox/router/rulesets/dat-url", h.guarded(rh.DatRuleSetURL))
-		mux.HandleFunc("/api/singbox/router/rulesets/dat-srs", rh.DatRuleSetSRS)
-		// Каталог SagerNet geosite — дополнение к каталогу пресетов:
-		// хендлер создаётся здесь один раз, кэш живёт в нём.
-		geositesHandler := api.NewSingboxGeositesHandler(s.downloadSvc)
-		mux.HandleFunc("/api/singbox/router/geosites/list", h.guarded(geositesHandler.List))
-		mux.HandleFunc("/api/singbox/router/outbounds/list", h.guarded(rh.ListOutbounds))
-		mux.HandleFunc("/api/singbox/router/outbounds/add", h.guarded(rh.AddOutbound))
-		mux.HandleFunc("/api/singbox/router/outbounds/update", h.guarded(rh.UpdateOutbound))
-		mux.HandleFunc("/api/singbox/router/outbounds/delete", h.guarded(rh.DeleteOutbound))
-		mux.HandleFunc("/api/singbox/router/presets/list", h.guarded(rh.ListPresets))
-		mux.HandleFunc("/api/singbox/router/presets/apply", h.guarded(rh.ApplyPreset))
-		mux.HandleFunc("/api/singbox/router/policies", h.guarded(rh.PoliciesCollection))
-		mux.HandleFunc("/api/singbox/router/wan-interfaces", h.guarded(rh.ListWANInterfaces))
-		mux.HandleFunc("/api/singbox/router/bindable-interfaces", h.guarded(rh.ListBindableInterfaces))
-		mux.HandleFunc("/api/singbox/router/ingress-eligible-interfaces", h.guarded(rh.ListIngressEligibleInterfaces))
-		mux.HandleFunc("/api/singbox/router/policy-tun/nat-preview", h.guarded(rh.PolicyTunNATPreview))
-		mux.HandleFunc("/api/singbox/router/policy-devices", h.guarded(rh.ListPolicyDevices))
-		mux.HandleFunc("/api/singbox/router/policy-devices/bind", h.guarded(rh.BindDevice))
-		mux.HandleFunc("/api/singbox/router/policy-devices/unbind", h.guarded(rh.UnbindDevice))
-		mux.HandleFunc("/api/singbox/router/dns/servers/list", h.guarded(rh.ListDNSServers))
-		mux.HandleFunc("/api/singbox/router/dns/servers/add", h.guarded(rh.AddDNSServer))
-		mux.HandleFunc("/api/singbox/router/dns/servers/update", h.guarded(rh.UpdateDNSServer))
-		mux.HandleFunc("/api/singbox/router/dns/servers/delete", h.guarded(rh.DeleteDNSServer))
-		mux.HandleFunc("/api/singbox/router/dns/servers/move", h.guarded(rh.MoveDNSServer))
-		mux.HandleFunc("/api/singbox/router/dns/servers/lookup", h.guarded(rh.LookupDNSServer))
-		mux.HandleFunc("/api/singbox/router/dns/rules/list", h.guarded(rh.ListDNSRules))
-		mux.HandleFunc("/api/singbox/router/dns/rules/add", h.guarded(rh.AddDNSRule))
-		mux.HandleFunc("/api/singbox/router/dns/rules/update", h.guarded(rh.UpdateDNSRule))
-		mux.HandleFunc("/api/singbox/router/dns/rules/delete", h.guarded(rh.DeleteDNSRule))
-		mux.HandleFunc("/api/singbox/router/dns/rules/move", h.guarded(rh.MoveDNSRule))
-		mux.HandleFunc("/api/singbox/router/dns/globals", h.guarded(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodGet {
-				rh.GetDNSGlobals(w, r)
-			} else {
-				rh.PutDNSGlobals(w, r)
-			}
-		}))
-		mux.HandleFunc("/api/singbox/router/dns/chain-preset", h.guarded(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodGet {
-				rh.GetDNSChainPreset(w, r)
-			} else {
-				rh.PutDNSChainPreset(w, r)
-			}
-		}))
-		mux.HandleFunc("/api/singbox/router/route/final", h.guarded(rh.SetRouteFinal))
-		mux.HandleFunc("/api/singbox/router/inspect", h.guarded(rh.Inspect))
-		mux.HandleFunc("/api/singbox/router/inspect-dns", h.guarded(rh.InspectDNS))
-		mux.HandleFunc("/api/singbox/router/inspect/stream", h.guarded(rh.InspectStream))
-		mux.HandleFunc("/api/singbox/router/staging", h.guarded(rh.GetStaging))
-		mux.HandleFunc("/api/singbox/router/staging/apply", h.guarded(rh.PostStagingApply))
-		mux.HandleFunc("/api/singbox/router/staging/discard", h.guarded(rh.PostStagingDiscard))
-	}
+	s.registerSingboxRouterRoutes(mux, h)
 
 	if s.bypassSetHandler != nil {
 		bh := s.bypassSetHandler
@@ -1590,16 +1525,103 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/mcp/keys/revoke", h.guarded(keysHandler.Revoke))
 }
 
-// registerStaticRoutes — preset catalog and the SPA static handler (must stay last).
-func (s *Server) registerStaticRoutes(mux *http.ServeMux, h *routeHandlers) {
+// registerPresetRoutes exposes the original portable catalog in both deployment
+// modes. Missing catalogs stay absent; authentication and read-only semantics
+// remain owned by the existing handler.
+func (s *Server) registerPresetRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// Unified preset catalog (protected, read-only in U0)
 	if s.presetCatalog != nil {
 		presetsHandler := api.NewPresetsHandler(s.presetCatalog)
 		mux.HandleFunc("/api/presets", h.guarded(presetsHandler.List))
 	}
+}
+
+// registerStaticRoutes — preset catalog and the SPA static handler (must stay last).
+func (s *Server) registerStaticRoutes(mux *http.ServeMux, h *routeHandlers) {
+	s.registerPresetRoutes(mux, h)
 
 	// Static files (SPA) - must be last.
 	if s.config.FrontendFS != nil {
 		mux.Handle("/", spaHandler(s.config.FrontendFS))
+	}
+}
+
+// registerSingboxRouterRoutes keeps the original editor API identical in both
+// deployment modes. Portable callers must supply an explicit runtime service.
+func (s *Server) registerSingboxRouterRoutes(mux *http.ServeMux, h *routeHandlers) {
+	if s.singboxRouterHandler != nil {
+		rh := s.singboxRouterHandler
+		mux.HandleFunc("/api/singbox/router/status", h.guarded(rh.GetStatus))
+		mux.HandleFunc("/api/singbox/router/mode", h.guarded(rh.SwitchMode))
+		mux.HandleFunc("/api/singbox/router/settings", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				rh.GetSettings(w, r)
+			} else {
+				rh.PutSettings(w, r)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/router/rules/list", h.guarded(rh.ListRules))
+		mux.HandleFunc("/api/singbox/router/rules/add", h.guarded(rh.AddRule))
+		mux.HandleFunc("/api/singbox/router/rules/update", h.guarded(rh.UpdateRule))
+		mux.HandleFunc("/api/singbox/router/rules/bulk-outbound", h.guarded(rh.BulkSetRuleOutbound))
+		mux.HandleFunc("/api/singbox/router/rules/delete", h.guarded(rh.DeleteRule))
+		mux.HandleFunc("/api/singbox/router/rules/move", h.guarded(rh.MoveRule))
+		mux.HandleFunc("/api/singbox/router/rulesets/list", h.guarded(rh.ListRuleSets))
+		mux.HandleFunc("/api/singbox/router/rulesets/add", h.guarded(rh.AddRuleSet))
+		mux.HandleFunc("/api/singbox/router/rulesets/update", h.guarded(rh.UpdateRuleSet))
+		mux.HandleFunc("/api/singbox/router/rulesets/bulk-detour", h.guarded(rh.BulkSetRuleSetDetour))
+		mux.HandleFunc("/api/singbox/router/rulesets/delete", h.guarded(rh.DeleteRuleSet))
+		mux.HandleFunc("/api/singbox/router/rulesets/dat-url", h.guarded(rh.DatRuleSetURL))
+		mux.HandleFunc("/api/singbox/router/rulesets/dat-srs", rh.DatRuleSetSRS)
+		// Каталог SagerNet geosite — дополнение к каталогу пресетов:
+		// хендлер создаётся здесь один раз, кэш живёт в нём.
+		geositesHandler := api.NewSingboxGeositesHandler(s.downloadSvc)
+		mux.HandleFunc("/api/singbox/router/geosites/list", h.guarded(geositesHandler.List))
+		mux.HandleFunc("/api/singbox/router/outbounds/list", h.guarded(rh.ListOutbounds))
+		mux.HandleFunc("/api/singbox/router/outbounds/add", h.guarded(rh.AddOutbound))
+		mux.HandleFunc("/api/singbox/router/outbounds/update", h.guarded(rh.UpdateOutbound))
+		mux.HandleFunc("/api/singbox/router/outbounds/delete", h.guarded(rh.DeleteOutbound))
+		mux.HandleFunc("/api/singbox/router/presets/list", h.guarded(rh.ListPresets))
+		mux.HandleFunc("/api/singbox/router/presets/apply", h.guarded(rh.ApplyPreset))
+		mux.HandleFunc("/api/singbox/router/policies", h.guarded(rh.PoliciesCollection))
+		mux.HandleFunc("/api/singbox/router/wan-interfaces", h.guarded(rh.ListWANInterfaces))
+		mux.HandleFunc("/api/singbox/router/bindable-interfaces", h.guarded(rh.ListBindableInterfaces))
+		mux.HandleFunc("/api/singbox/router/ingress-eligible-interfaces", h.guarded(rh.ListIngressEligibleInterfaces))
+		mux.HandleFunc("/api/singbox/router/policy-tun/nat-preview", h.guarded(rh.PolicyTunNATPreview))
+		mux.HandleFunc("/api/singbox/router/policy-devices", h.guarded(rh.ListPolicyDevices))
+		mux.HandleFunc("/api/singbox/router/policy-devices/bind", h.guarded(rh.BindDevice))
+		mux.HandleFunc("/api/singbox/router/policy-devices/unbind", h.guarded(rh.UnbindDevice))
+		mux.HandleFunc("/api/singbox/router/dns/servers/list", h.guarded(rh.ListDNSServers))
+		mux.HandleFunc("/api/singbox/router/dns/servers/add", h.guarded(rh.AddDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/update", h.guarded(rh.UpdateDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/delete", h.guarded(rh.DeleteDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/move", h.guarded(rh.MoveDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/lookup", h.guarded(rh.LookupDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/rules/list", h.guarded(rh.ListDNSRules))
+		mux.HandleFunc("/api/singbox/router/dns/rules/add", h.guarded(rh.AddDNSRule))
+		mux.HandleFunc("/api/singbox/router/dns/rules/update", h.guarded(rh.UpdateDNSRule))
+		mux.HandleFunc("/api/singbox/router/dns/rules/delete", h.guarded(rh.DeleteDNSRule))
+		mux.HandleFunc("/api/singbox/router/dns/rules/move", h.guarded(rh.MoveDNSRule))
+		mux.HandleFunc("/api/singbox/router/dns/globals", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				rh.GetDNSGlobals(w, r)
+			} else {
+				rh.PutDNSGlobals(w, r)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/router/dns/chain-preset", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				rh.GetDNSChainPreset(w, r)
+			} else {
+				rh.PutDNSChainPreset(w, r)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/router/route/final", h.guarded(rh.SetRouteFinal))
+		mux.HandleFunc("/api/singbox/router/inspect", h.guarded(rh.Inspect))
+		mux.HandleFunc("/api/singbox/router/inspect-dns", h.guarded(rh.InspectDNS))
+		mux.HandleFunc("/api/singbox/router/inspect/stream", h.guarded(rh.InspectStream))
+		mux.HandleFunc("/api/singbox/router/staging", h.guarded(rh.GetStaging))
+		mux.HandleFunc("/api/singbox/router/staging/apply", h.guarded(rh.PostStagingApply))
+		mux.HandleFunc("/api/singbox/router/staging/discard", h.guarded(rh.PostStagingDiscard))
 	}
 }

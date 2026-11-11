@@ -11,6 +11,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
@@ -22,8 +23,14 @@ import (
 // коммитит pending → active и взводит debounced reload. Ни один продюсер
 // не пишет в user-слот — единственный владелец содержимого здесь.
 type SingboxConfigEditorHandler struct {
-	orch *orchestrator.Orchestrator
-	log  *logging.ScopedLogger
+	operationGate *heavyop.Gate
+	orch          *orchestrator.Orchestrator
+	log           *logging.ScopedLogger
+}
+
+// SetOperationCoordinator is startup-only and shares the local writer gate.
+func (h *SingboxConfigEditorHandler) SetOperationCoordinator(gate *heavyop.Gate) {
+	h.operationGate = gate
 }
 
 // NewSingboxConfigEditorHandler constructs the handler.
@@ -310,6 +317,11 @@ func (h *SingboxConfigEditorHandler) PutUserConfig(w http.ResponseWriter, r *htt
 	if !validateUserConfigJSON(w, raw) {
 		return
 	}
+	release, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer release()
 	if err := h.orch.SaveDraft(orchestrator.SlotUser, raw); err != nil {
 		h.log.Warn("user-config-save", "90-user.json", "save draft failed: "+err.Error())
 		response.InternalError(w, err.Error())
@@ -343,6 +355,11 @@ func (h *SingboxConfigEditorHandler) CheckUserConfig(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
+	release, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer release()
 	if raw == nil {
 		draft, err := h.orch.LoadDraft(orchestrator.SlotUser)
 		if err != nil {
@@ -389,6 +406,11 @@ func (h *SingboxConfigEditorHandler) ApplyUserConfig(w http.ResponseWriter, r *h
 		return
 	}
 	// Явный pre-check ради чистого 409 без побочных эффектов.
+	release, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer release()
 	if !h.orch.HasDraft(orchestrator.SlotUser) {
 		response.ErrorWithStatus(w, http.StatusConflict, "no draft to apply", "NO_DRAFT")
 		return
@@ -448,6 +470,11 @@ func (h *SingboxConfigEditorHandler) DiscardUserConfig(w http.ResponseWriter, r 
 		response.MethodNotAllowed(w)
 		return
 	}
+	release, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer release()
 	if err := h.orch.DiscardDraft(orchestrator.SlotUser); err != nil {
 		h.log.Warn("user-config-discard", "90-user.json", "discard draft failed: "+err.Error())
 		response.InternalError(w, err.Error())
@@ -481,6 +508,11 @@ func (h *SingboxConfigEditorHandler) EnableUserConfig(w http.ResponseWriter, r *
 		response.BadRequest(w, err.Error())
 		return
 	}
+	release, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer release()
 	if err := h.orch.SetEnabled(orchestrator.SlotUser, req.Enabled); err != nil {
 		h.log.Warn("user-config-enable", "90-user.json", "toggle slot failed: "+err.Error())
 		response.InternalError(w, err.Error())

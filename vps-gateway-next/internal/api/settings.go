@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -176,6 +177,7 @@ type MonitoringRefreshService interface {
 
 // SettingsHandler handles settings API endpoints.
 type SettingsHandler struct {
+	operationGate           *heavyop.Gate
 	store                   *storage.SettingsStore
 	tunnels                 *storage.AWGTunnelStore
 	pingCheck               PingCheckToggleService
@@ -210,6 +212,12 @@ func NewSettingsHandler(store *storage.SettingsStore, appLogger logging.AppLogge
 		store: store,
 		log:   logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubSettings),
 	}
+}
+
+// SetOperationCoordinator is startup-only. The gate spans the settings snapshot,
+// persisted update and apply callbacks; callbacks must not reacquire it.
+func (h *SettingsHandler) SetOperationCoordinator(gate *heavyop.Gate) {
+	h.operationGate = gate
 }
 
 // SetExposureGuard wires the guard re-checked after every settings save.
@@ -411,6 +419,11 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	releaseOperation, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer releaseOperation()
 
 	oldSettings, err := h.store.Get()
 	if err != nil {

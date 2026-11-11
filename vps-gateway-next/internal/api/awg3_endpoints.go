@@ -15,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
@@ -104,6 +105,7 @@ type OutboundTagLister interface {
 
 // Awg3Handler serves CRUD for imported AWG3 (sing-box awg endpoint) tunnels.
 type Awg3Handler struct {
+	operationGate   *heavyop.Gate
 	mutationMu      awg3endpoint.TransactionLocker
 	store           *awg3endpoint.Store
 	commitCandidate func([]awg3endpoint.Record) error
@@ -114,6 +116,11 @@ type Awg3Handler struct {
 	afterMutation   awg3DependentReconciler
 	log             *logging.ScopedLogger
 }
+
+// SetOperationCoordinator is startup-only. It is the outer writer gate, not
+// heavyop.Default. Dependent DNS reconciliation runs inside this transaction
+// and must not acquire the same gate again.
+func (h *Awg3Handler) SetOperationCoordinator(gate *heavyop.Gate) { h.operationGate = gate }
 
 // NewAwg3Handler builds the handler. svc is *awg3endpoint.Service in production
 // (it satisfies awg3Service); rules is the router service (satisfies RuleLister).
@@ -234,9 +241,6 @@ func (h *Awg3Handler) handleList(w http.ResponseWriter, _ *http.Request) {
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/awg3-endpoints [post]
 func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
-	h.mutationMu.Lock()
-	defer h.mutationMu.Unlock()
-
 	var req Awg3ImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.BadRequest(w, "невалидный JSON запроса: "+err.Error())
@@ -257,6 +261,13 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg = converted
 	}
+	release, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer release()
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	rec, err := awg3endpoint.Parse(cfg, req.Tag, h.takenTags(r.Context()))
 	if err != nil {
 		response.BadRequest(w, err.Error())
@@ -290,6 +301,11 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/awg3-endpoints/{id} [delete]
 func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id string) {
+	release, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer release()
 	h.mutationMu.Lock()
 	defer h.mutationMu.Unlock()
 
@@ -349,9 +365,6 @@ func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id st
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/awg3-endpoints/{id} [patch]
 func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id string) {
-	h.mutationMu.Lock()
-	defer h.mutationMu.Unlock()
-
 	var req struct {
 		Tag string `json:"tag"`
 	}
@@ -359,6 +372,13 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 		response.BadRequest(w, "невалидный JSON запроса: "+err.Error())
 		return
 	}
+	release, ok := acquireConfigOperation(w, r, h.operationGate)
+	if !ok {
+		return
+	}
+	defer release()
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	before, err := h.store.List()
 	if err != nil {
 		response.InternalError(w, err.Error())

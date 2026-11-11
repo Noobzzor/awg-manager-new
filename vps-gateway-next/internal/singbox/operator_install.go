@@ -362,6 +362,11 @@ func (o *Operator) Install(ctx context.Context) error {
 // стоит выше, на уровне API: снимать за пользователя правила iptables и
 // OpkgTun эта функция не умеет и не должна.
 func (o *Operator) Uninstall(ctx context.Context) error {
+	releaseOperation, err := o.acquireWriterOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseOperation()
 	if !o.installBusy.CompareAndSwap(false, true) {
 		return ErrInstallInProgress
 	}

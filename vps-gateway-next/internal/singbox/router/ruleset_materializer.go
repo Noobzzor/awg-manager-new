@@ -2,6 +2,8 @@ package router
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,9 +28,11 @@ type inlineRuleSetSource struct {
 }
 
 type ruleSetMaterializer struct {
-	configDir string
-	binary    string
-	log       *logging.ScopedLogger
+	immutableInline bool
+	syncPath        func(string) error
+	configDir       string
+	binary          string
+	log             *logging.ScopedLogger
 }
 
 var inlineRuleSetCompileExec = func(binary string, args []string) (stdout, stderr string, err error) {
@@ -417,6 +421,13 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 		return RuleSet{}, fmt.Errorf("rule_set %q: %w", rs.Tag, err)
 	}
 	base := safeRuleSetFilename(rs.Tag)
+	if m.immutableInline {
+		// The draft must not replace files referenced by the applied config.
+		// The source includes its format version. Identical content can share
+		// an artifact across tags; only the config reference changes on Apply.
+		digest := sha256.Sum256(sourceJSON)
+		base = "sha256-" + hex.EncodeToString(digest[:])
+	}
 	dir := filepath.Join(m.configDir, "rule-sets", "inline")
 	jsonPath := filepath.Join(dir, base+".json")
 	srsPath := filepath.Join(dir, base+".srs")
@@ -429,6 +440,9 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 	// сравнение с уже лежащим .json ловит и бамп версии формата — .json от
 	// прежней версии не совпадёт с пересобранным.
 	if existing, err := os.ReadFile(jsonPath); err == nil && bytes.Equal(existing, sourceJSON) && regularFileExists(srsPath) {
+		if err := m.syncPortablePaths(jsonPath, srsPath, dir, filepath.Dir(dir), m.configDir); err != nil {
+			return RuleSet{}, err
+		}
 		return managedLocalRuleSet(inlineSRSTag(rs.Tag), srsPath), nil
 	}
 
@@ -474,6 +488,11 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 		_ = os.Remove(tmpSourcePath)
 		return RuleSet{}, fmt.Errorf("compile inline rule-set: output file was not created")
 	}
+	if err := m.syncPortablePaths(tmpSourcePath, tmpOutPath); err != nil {
+		_ = os.Remove(tmpSourcePath)
+		_ = os.Remove(tmpOutPath)
+		return RuleSet{}, err
+	}
 	if err := os.Rename(tmpSourcePath, jsonPath); err != nil {
 		_ = os.Remove(tmpSourcePath)
 		_ = os.Remove(tmpOutPath)
@@ -482,6 +501,11 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 	if err := os.Rename(tmpOutPath, srsPath); err != nil {
 		_ = os.Remove(tmpOutPath)
 		return RuleSet{}, fmt.Errorf("publish binary: %w", err)
+	}
+	if err := m.syncPortablePaths(dir, filepath.Dir(dir), m.configDir); err != nil {
+		// Published immutable files may remain, but no reference is accepted.
+		// A retry through the cache-hit path must sync them again.
+		return RuleSet{}, err
 	}
 
 	if m.log != nil {
@@ -493,6 +517,36 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 	}
 
 	return managedLocalRuleSet(inlineSRSTag(rs.Tag), srsPath), nil
+}
+
+// Portable publication must be durable before its canonical draft/journal can
+// refer to it. Startup separately owns durable creation of the config root.
+func (m ruleSetMaterializer) syncPortablePaths(paths ...string) error {
+	if !m.immutableInline {
+		return nil
+	}
+	syncPath := m.syncPath
+	if syncPath == nil {
+		syncPath = syncRuleSetArtifactPath
+	}
+	for _, path := range paths {
+		if err := syncPath(path); err != nil {
+			return fmt.Errorf("sync portable rule-set artifacts: %w", err)
+		}
+	}
+	return nil
+}
+
+func syncRuleSetArtifactPath(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func (m ruleSetMaterializer) removeInlineArtifacts(tag string) {

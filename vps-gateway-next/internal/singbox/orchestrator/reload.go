@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +16,11 @@ import (
 // waitForSingbox burns the whole boot window before the process even
 // starts (stand-found on aarch64 off→tproxy switches).
 func (o *Orchestrator) ReloadNow() error {
+	o.cancelPendingReload()
+	return o.Reload()
+}
+
+func (o *Orchestrator) cancelPendingReload() {
 	o.mu.Lock()
 	if o.reloadTimer != nil {
 		if o.reloadTimer.Stop() {
@@ -25,7 +32,6 @@ func (o *Orchestrator) ReloadNow() error {
 	// выстрелил бы вторым, уже ненужным reload'ом.
 	o.pendingReload = false
 	o.mu.Unlock()
-	return o.Reload()
 }
 
 // scheduleReload arms (or re-arms) the debounce timer. Caller MUST
@@ -70,7 +76,12 @@ func (o *Orchestrator) scheduleReload() {
 			return
 		}
 		if err := o.Reload(); err != nil {
-			o.log("error", fmt.Sprintf("orchestrator reload: %v", err))
+			o.mu.Lock()
+			closing := o.closed
+			o.mu.Unlock()
+			if !closing || !errors.Is(err, context.Canceled) {
+				o.log("error", fmt.Sprintf("orchestrator reload: %v", err))
+			}
 		}
 	})
 }
@@ -86,9 +97,61 @@ func (o *Orchestrator) scheduleReload() {
 // the internal debounce timer. Safe for concurrent callers — internally
 // serialized by mu and the reloading flag.
 func (o *Orchestrator) Reload() error {
-	heavyop.Default.Lock()
-	defer heavyop.Default.Unlock()
+	return o.ReloadContext(context.Background())
+}
 
+// ReloadContext admits ordinary/manual/debounced reloads after config writers.
+// ctx and Close cancel admission only; an admitted lifecycle body retains its
+// established behavior. Transaction owners use RuntimeLease.ReloadNow instead.
+func (o *Orchestrator) ReloadContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	o.mu.Lock()
+	if o.closed {
+		o.mu.Unlock()
+		return context.Canceled
+	}
+	if o.reloadAdmissionCtx == nil {
+		o.reloadAdmissionCtx, o.cancelReloadAdmission = context.WithCancel(context.Background())
+	}
+	closing := o.reloadAdmissionCtx
+	coordinator := o.operationCoordinator
+	o.mu.Unlock()
+	admission, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(closing, cancel)
+	defer stop()
+	defer cancel()
+	if coordinator != nil {
+		if err := coordinator.LockContext(admission); err != nil {
+			return err
+		}
+		defer coordinator.Unlock()
+	}
+	if err := heavyop.Default.LockContext(admission); err != nil {
+		return err
+	}
+	defer heavyop.Default.Unlock()
+	o.mu.Lock()
+	blocked := o.runtimeRecoveryRequired
+	closed := o.closed
+	o.mu.Unlock()
+	if closed {
+		return context.Canceled
+	}
+	if blocked {
+		return ErrRuntimeRecoveryRequired
+	}
+	return o.reloadWithRuntimeLock()
+}
+
+// Caller must hold heavyop.Default for the entire lifecycle operation.
+func (o *Orchestrator) reloadWithRuntimeLock() error {
+	return o.reloadWithRuntimeProcess(nil)
+}
+
+// A process lease supplies mutation methods that do not reacquire its own gate.
+func (o *Orchestrator) reloadWithRuntimeProcess(process ProcessController) error {
 	o.mu.Lock()
 	if o.reloading {
 		o.mu.Unlock()
@@ -127,6 +190,9 @@ func (o *Orchestrator) Reload() error {
 	newHash := o.enabledConfigHashLocked()
 	needRunning := o.hasActiveWorkLocked()
 	proc := o.proc
+	if process != nil {
+		proc = process
+	}
 	shouldRun := o.shouldRun
 	prevHasTun := o.prevHasTun
 	newHasTun := res.HasTun
@@ -507,6 +573,10 @@ func (o *Orchestrator) Close() {
 		}
 		o.reloadTimer = nil
 	}
+	cancelAdmission := o.cancelReloadAdmission
 	o.mu.Unlock()
+	if cancelAdmission != nil {
+		cancelAdmission()
+	}
 	o.timerWG.Wait()
 }

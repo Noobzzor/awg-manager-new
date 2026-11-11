@@ -12,6 +12,7 @@ import (
 	gatewaypolicy "github.com/hoaxisr/awg-manager/internal/gateway/policy"
 	gatewaysubscription "github.com/hoaxisr/awg-manager/internal/gateway/subscription"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 )
 
 var (
@@ -21,16 +22,24 @@ var (
 )
 
 type gatewayClientHTTP struct {
-	warp            gatewayWARPBackend
-	registry        *gatewayingress.Registry
-	path            string
-	applier         gatewayingress.PeerApplier
-	statusReader    gatewayingress.PeerStatusReader
-	serverPublicKey string
-	endpoint        string
-	subscriptions   *gatewaySubscriptionHTTP
-	groups          *gatewayGroupHTTP
-	policies        *gatewayPolicyHTTP
+	mutationGate      *heavyop.Gate
+	mutationAdmission func(context.Context) error
+	warp              gatewayWARPBackend
+	registry          *gatewayingress.Registry
+	path              string
+	applier           gatewayingress.PeerApplier
+	statusReader      gatewayingress.PeerStatusReader
+	serverPublicKey   string
+	endpoint          string
+	subscriptions     *gatewaySubscriptionHTTP
+	groups            *gatewayGroupHTTP
+	policies          *gatewayPolicyHTTP
+}
+
+// SetMutationAdmission is configured once by local startup.
+func (h *gatewayClientHTTP) SetMutationAdmission(gate *heavyop.Gate, check func(context.Context) error) {
+	h.mutationGate = gate
+	h.mutationAdmission = check
 }
 
 type gatewayClientRequest struct {
@@ -89,6 +98,25 @@ func (h *gatewayClientHTTP) SetSubscriptionBaseURL(raw string) error {
 }
 
 func (h *gatewayClientHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		if h.mutationGate != nil {
+			if err := h.mutationGate.LockContext(r.Context()); err != nil {
+				response.ErrorWithStatus(w, http.StatusConflict, "gateway mutation admission cancelled", "GATEWAY_MUTATION_REFUSED")
+				return
+			}
+			defer h.mutationGate.Unlock()
+		}
+		if r.Context().Err() != nil {
+			response.ErrorWithStatus(w, http.StatusConflict, "gateway mutation admission cancelled", "GATEWAY_MUTATION_REFUSED")
+			return
+		}
+		if h.mutationAdmission != nil {
+			if err := h.mutationAdmission(r.Context()); err != nil {
+				response.ErrorWithStatus(w, http.StatusConflict, "gateway writer does not own policy state", "GATEWAY_POLICY_OWNER_CONFLICT")
+				return
+			}
+		}
+	}
 	if r.URL.Path == "/api/gateway/warp" || strings.HasPrefix(r.URL.Path, "/api/gateway/warp/") {
 		h.serveWARP(w, r)
 		return

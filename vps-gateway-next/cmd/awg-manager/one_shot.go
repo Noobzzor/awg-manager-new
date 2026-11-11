@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
+	"github.com/hoaxisr/awg-manager/internal/gateway/routerpolicy"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
@@ -55,9 +57,20 @@ func runLocalCleanup(runtime runtimeSettings) error {
 
 // The callback isolates destructive uninstall from preflight regression tests.
 func runLocalCleanupWith(runtime runtimeSettings, uninstall func() error) error {
+	if err := routerpolicy.RequireGatewayOwner(context.Background(), runtime.dataDir); err != nil {
+		return fmt.Errorf("cleanup policy owner admission: %w", err)
+	}
 	configDir := singbox.EffectiveConfigDir(filepath.Join(runtime.dataDir, "sing-box"), runtime.singboxConfigDir)
 	if err := orchestrator.ValidateStateDirectories(configDir); err != nil {
 		return fmt.Errorf("cleanup preflight: %w", err)
 	}
+	if _, err := os.Lstat(runtime.dataDir); os.IsNotExist(err) {
+		return nil // no owned state exists; cleanup must not create it
+	}
+	owner, err := routerpolicy.AcquirePolicyOwner(context.Background(), runtime.dataDir, routerpolicy.PolicyOwnerGateway)
+	if err != nil {
+		return fmt.Errorf("cleanup policy owner admission: %w", err)
+	}
+	defer owner.Close()
 	return uninstall()
 }

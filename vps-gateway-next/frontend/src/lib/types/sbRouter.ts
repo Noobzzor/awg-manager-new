@@ -600,7 +600,7 @@ export interface SingboxRouterDNSRewrite {
 export interface AWGTagInfo {
 	tag: string;
 	label: string;
-	kind: 'managed' | 'system' | 'awg3';
+	kind: 'managed' | 'system' | 'awg3' | 'warp';
 	iface: string;
 }
 

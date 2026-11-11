@@ -13,6 +13,9 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 // Process manages the sing-box process lifecycle (single-process model).
@@ -69,7 +72,14 @@ type Process struct {
 	// + manual UI Restart) cannot both pass the IsRunning gate and spawn two
 	// processes. IsRunning is intentionally NOT guarded — it is called by the
 	// watchdog while a Start is in flight and must never block.
-	startMu sync.Mutex
+	startMu          sync.Mutex
+	mutationGate     heavyop.Gate
+	recoveryRequired atomic.Bool
+	// Recovery startup deliberately does not adopt a surviving process. Only
+	// a child spawned by this Process, with its kernel birth identity intact,
+	// can satisfy lifecycle admission in this mode. Set before publication.
+	requireSpawnedIdentity bool
+	spawnedIdentity        atomic.Pointer[spawnedProcessIdentity]
 
 	// stderrMu protects lastStderr so OnExit / GetLastStderr concurrent.
 	stderrMu   sync.RWMutex
@@ -120,6 +130,15 @@ type Process struct {
 // signal delivers sig to pid through the signalFn seam, falling back to
 // the real syscall when the seam is unset (zero-value Process in tests).
 func (p *Process) signal(pid int, sig syscall.Signal) error {
+	if p.requireSpawnedIdentity {
+		if p.signalFn != nil {
+			if !p.matchesSpawnedIdentity(pid) {
+				return ErrRuntimeProcessOwnership
+			}
+			return p.signalFn(pid, sig)
+		}
+		return p.signalSpawnedProcess(pid, sig)
+	}
 	if p.signalFn != nil {
 		return p.signalFn(pid, sig)
 	}
@@ -184,6 +203,15 @@ func (p *Process) Start() error {
 // watchdog/router reconcile не должен жечь Allow за чужой рестарт
 // (issue #456 FIX-E) и не должен двигать NoteProcessStart (FIX-I).
 func (p *Process) StartSpawned() (spawned bool, err error) {
+	p.mutationGate.Lock()
+	defer p.mutationGate.Unlock()
+	if p.recoveryRequired.Load() {
+		return false, orchestrator.ErrRuntimeRecoveryRequired
+	}
+	return p.startSpawnedLeased()
+}
+
+func (p *Process) startSpawnedLeased() (bool, error) {
 	p.startMu.Lock()
 	defer p.startMu.Unlock()
 	return p.startLocked()
@@ -191,6 +219,9 @@ func (p *Process) StartSpawned() (spawned bool, err error) {
 
 // startLocked is the lock-free body of Start. Must be called with startMu held.
 func (p *Process) startLocked() (spawned bool, err error) {
+	if err := p.checkRecoveryProcessAdmission(); err != nil {
+		return false, err
+	}
 	if running, _ := p.IsRunning(); running {
 		return false, nil
 	}
@@ -243,6 +274,26 @@ func (p *Process) startLocked() (spawned bool, err error) {
 		_ = outF.Close()
 		_ = errF.Close()
 		return false, fmt.Errorf("start sing-box: %w", err)
+	}
+	if p.requireSpawnedIdentity {
+		identity, identityErr := p.captureSpawnedIdentity(cmd.Process.Pid)
+		// Start may return before /proc exposes a consistent view of the
+		// just-executed child. The child is still ours and has not been
+		// waited on, so its PID cannot be recycled during this short retry.
+		// Each attempt still checks the executable, arguments and birth ID.
+		deadline := time.Now().Add(200 * time.Millisecond)
+		for identityErr != nil && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+			identity, identityErr = p.captureSpawnedIdentity(cmd.Process.Pid)
+		}
+		if identityErr != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			_ = outF.Close()
+			_ = errF.Close()
+			return false, fmt.Errorf("capture newly spawned engine identity: %w", identityErr)
+		}
+		p.spawnedIdentity.Store(identity)
 	}
 	// The child holds its own duplicated fds after fork/exec; the
 	// parent's copies are no longer needed.
@@ -349,6 +400,11 @@ func (p *Process) startLocked() (spawned bool, err error) {
 // by pid exactly as for a spawned process (orchestrator, Stop, Reload all
 // go through readPID/signal, which do not care who forked the pid).
 func (p *Process) AttachIfRunning() (bool, int) {
+	p.mutationGate.Lock()
+	defer p.mutationGate.Unlock()
+	if p.recoveryRequired.Load() {
+		return false, 0
+	}
 	p.startMu.Lock()
 	defer p.startMu.Unlock()
 	if p.attached || p.tailCancel != nil {
@@ -508,6 +564,12 @@ func (p *Process) setLastStderr(s string) {
 // Stop sends SIGTERM, then SIGKILL after grace period.
 // Stop acquires startMu so it cannot interleave with an in-flight Start.
 func (p *Process) Stop() error {
+	p.mutationGate.Lock()
+	defer p.mutationGate.Unlock()
+	return p.stopLeased()
+}
+
+func (p *Process) stopLeased() error {
 	p.startMu.Lock()
 	defer p.startMu.Unlock()
 	return p.stopLocked()
@@ -528,19 +590,33 @@ func (p *Process) Close() {
 
 // stopLocked is the lock-free body of Stop. Must be called with startMu held.
 func (p *Process) stopLocked() error {
+	if err := p.checkRecoveryProcessAdmission(); err != nil {
+		return err
+	}
 	pid, err := p.readPID()
 	if err != nil {
 		return nil // nothing to stop
+	}
+	if p.requireSpawnedIdentity && !isAlive(pid) {
+		p.cleanupPidIfOurs(pid)
+		return nil
 	}
 	// Mark the upcoming exit of the CURRENT generation as deliberate
 	// BEFORE the signal lands so its exit-monitor goroutine never
 	// mistakes our own SIGTERM/SIGKILL for a crash. nil = процесс из pid
 	// файла спавнили не мы (например, предыдущий awgm) — монитора нет,
 	// метить нечего.
+	wasDeliberate := false
 	if p.curGen != nil {
+		wasDeliberate = p.curGen.deliberate.Load()
 		p.curGen.deliberate.Store(true)
 	}
-	_ = p.signal(pid, syscall.SIGTERM)
+	if err := p.signal(pid, syscall.SIGTERM); err != nil && p.requireSpawnedIdentity {
+		if p.curGen != nil {
+			p.curGen.deliberate.Store(wasDeliberate)
+		}
+		return err
+	}
 	// Wait up to 3s
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -550,7 +626,9 @@ func (p *Process) stopLocked() error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if isAlive(pid) {
-		_ = p.signal(pid, syscall.SIGKILL)
+		if err := p.signal(pid, syscall.SIGKILL); err != nil && p.requireSpawnedIdentity {
+			return err
+		}
 		// Brief poll for the kernel to reap the SIGKILL'd process before
 		// removing the pid record. Without this, a follow-up Start that
 		// sees a missing pidfile could spawn a second process alongside
@@ -567,8 +645,15 @@ func (p *Process) stopLocked() error {
 	// gave up waiting after SIGKILL) — the next Start must spawn a real
 	// child rather than treating a stale attached=true as "already
 	// running". No-op for a spawned process (already false).
+	if p.requireSpawnedIdentity {
+		if isAlive(pid) {
+			return fmt.Errorf("runtime process stop is not confirmed")
+		}
+		p.cleanupPidIfOurs(pid)
+	} else {
+		_ = os.Remove(p.pidPath)
+	}
 	p.attached = false
-	_ = os.Remove(p.pidPath)
 	return nil
 }
 
@@ -583,8 +668,20 @@ func (p *Process) stopLocked() error {
 // The lock-free helpers startLocked/stopLocked are used internally to
 // avoid a reentrant-lock deadlock.
 func (p *Process) Reload() error {
+	p.mutationGate.Lock()
+	defer p.mutationGate.Unlock()
+	if p.recoveryRequired.Load() {
+		return orchestrator.ErrRuntimeRecoveryRequired
+	}
+	return p.reloadLeased()
+}
+
+func (p *Process) reloadLeased() error {
 	p.startMu.Lock()
 	defer p.startMu.Unlock()
+	if err := p.checkRecoveryProcessAdmission(); err != nil {
+		return err
+	}
 
 	pid, err := p.readPID()
 	if err != nil {
@@ -597,13 +694,17 @@ func (p *Process) Reload() error {
 	// reload path (scheduler rule-set refresh, tunnel ApplyConfig, orchestrator)
 	// since they all funnel through here.
 	if p.ReloadNeedsRestart != nil && p.ReloadNeedsRestart() {
-		_ = p.stopLocked()
+		if err := p.stopLocked(); err != nil && p.requireSpawnedIdentity {
+			return err
+		}
 		_, err := p.startLocked()
 		return err
 	}
 	if err := p.signal(pid, syscall.SIGHUP); err != nil {
 		// SIGHUP failed; full restart
-		_ = p.stopLocked()
+		if err := p.stopLocked(); err != nil && p.requireSpawnedIdentity {
+			return err
+		}
 		_, err := p.startLocked()
 		return err
 	}
@@ -636,6 +737,9 @@ func (p *Process) IsRunning() (bool, int) {
 // pidMatch reports whether pid is our sing-box, using the test seam
 // (matchBinaryFn) when set, otherwise the real /proc cmdline check.
 func (p *Process) pidMatch(pid int) bool {
+	if p.requireSpawnedIdentity {
+		return p.matchesSpawnedIdentity(pid)
+	}
 	match := p.matchBinaryFn
 	if match == nil {
 		match = p.matchesBinary

@@ -107,9 +107,10 @@ func (o *Operator) singboxFeaturesCached() []string {
 
 // Operator is the high-level facade for sing-box integration.
 type Operator struct {
-	log    *slog.Logger
-	dir    string
-	binary string
+	operationCoordinator orchestrator.OperationCoordinator
+	log                  *slog.Logger
+	dir                  string
+	binary               string
 	// versionSidecar is kept in the writable runtime directory for portable
 	// Docker mode. Legacy router mode keeps the historical adjacent sidecar.
 	versionSidecar string
@@ -273,6 +274,22 @@ type Operator struct {
 	outboundRefs outboundReferenceRenamer
 }
 
+// SetOperationCoordinator is initialization-only and joins manual control and
+// watchdog reconciliation to the local configuration writer coordinator.
+func (o *Operator) SetOperationCoordinator(coordinator orchestrator.OperationCoordinator) {
+	o.operationCoordinator = coordinator
+}
+
+func (o *Operator) acquireWriterOperation(ctx context.Context) (func(), error) {
+	if o.operationCoordinator == nil {
+		return func() {}, nil
+	}
+	if err := o.operationCoordinator.LockContext(ctx); err != nil {
+		return nil, err
+	}
+	return o.operationCoordinator.Unlock, nil
+}
+
 type outboundReferenceRenamer interface {
 	IsOutboundTagInUse(ctx context.Context, tag string) bool
 	RenameExternalOutboundTag(ctx context.Context, oldTag, newTag string) error
@@ -280,9 +297,10 @@ type outboundReferenceRenamer interface {
 
 // OperatorDeps are external dependencies for DI.
 type OperatorDeps struct {
-	Log      *slog.Logger
-	Queries  *query.Queries
-	Commands *command.Commands
+	OperationCoordinator orchestrator.OperationCoordinator
+	Log                  *slog.Logger
+	Queries              *query.Queries
+	Commands             *command.Commands
 	// AppLogger surfaces sing-box stdout/stderr in the in-memory app
 	// log buffer (visible at /diagnostics?tab=logs). Optional — when
 	// nil, process output is only mirrored to slog.
@@ -333,6 +351,10 @@ type OperatorDeps struct {
 }
 
 func NewOperator(d OperatorDeps) *Operator {
+	return constructOperatorForStartup(d, false)
+}
+
+func constructOperatorForStartup(d OperatorDeps, forRecovery bool) *Operator {
 	explicitDir := d.Dir != ""
 	dir := d.Dir
 	if dir == "" {
@@ -355,7 +377,7 @@ func NewOperator(d OperatorDeps) *Operator {
 		log = slog.Default()
 	}
 
-	if d.ConfigDir == "" {
+	if !forRecovery && d.ConfigDir == "" {
 		if err := MigrateLegacyConfigDir(dir); err != nil {
 			log.Warn("singbox config.d migration", "err", err)
 		}
@@ -387,8 +409,10 @@ func NewOperator(d OperatorDeps) *Operator {
 		versionSidecar = filepath.Join(dir, "sing-box.meta.json")
 	}
 
-	for _, s := range reconcileConfigStepsForRuntime(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, desiredClashPort, desiredCacheLocation, cacheDBPath, d.ConfigDir == "", log) {
-		s.run()
+	if !forRecovery {
+		for _, s := range reconcileConfigStepsForRuntime(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, desiredClashPort, desiredCacheLocation, cacheDBPath, d.ConfigDir == "", log) {
+			s.run()
+		}
 	}
 
 	var proxyMgr ndmsProxies
@@ -396,33 +420,41 @@ func NewOperator(d OperatorDeps) *Operator {
 		proxyMgr = NewProxyManager(d.Queries, d.Commands)
 	}
 	op := &Operator{
-		log:                log,
-		bootstrapDNS:       d.BootstrapDNS,
-		clashPort:          d.ClashPort,
-		singboxLogLevel:    d.SingboxLogLevel,
-		cacheFileLocation:  d.CacheFileLocation,
-		defaultCacheDBPath: cacheDBPath,
-		dir:                dir,
-		binary:             binary,
-		versionSidecar:     versionSidecar,
-		configPath:         configPath,
-		pidPath:            pidPath,
-		proc:               NewProcess(binary, configPath, pidPath),
-		validator:          NewValidator(binary),
-		proxyMgr:           proxyMgr,
-		clash:              NewClashClient(ClashAddr(desiredClashPort)),
-		processLogger:      logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBProcess),
-		runtimeLogger:      logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBRuntime),
-		persistManualStop:  d.SetManuallyStopped,
-		bus:                d.Bus,
+		operationCoordinator: d.OperationCoordinator,
+		log:                  log,
+		bootstrapDNS:         d.BootstrapDNS,
+		clashPort:            d.ClashPort,
+		singboxLogLevel:      d.SingboxLogLevel,
+		cacheFileLocation:    d.CacheFileLocation,
+		defaultCacheDBPath:   cacheDBPath,
+		dir:                  dir,
+		binary:               binary,
+		versionSidecar:       versionSidecar,
+		configPath:           configPath,
+		pidPath:              pidPath,
+		proc:                 NewProcess(binary, configPath, pidPath),
+		validator:            NewValidator(binary),
+		proxyMgr:             proxyMgr,
+		clash:                NewClashClient(ClashAddr(desiredClashPort)),
+		processLogger:        logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBProcess),
+		runtimeLogger:        logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBRuntime),
+		persistManualStop:    d.SetManuallyStopped,
+		bus:                  d.Bus,
 	}
 	op.manuallyStopped.Store(d.InitialManuallyStopped)
 	op.ndmsProxyEnabledFn = d.IsNDMSProxyEnabled
 	op.proc.OnStderrLine = op.handleStderrLine
 	op.proc.OnStdoutLine = op.handleStdoutLine
 	op.proc.OnExit = op.handleExit
-	if adopted, pid := op.proc.AttachIfRunning(); adopted {
-		op.log.Info("reconnected to running sing-box", "pid", pid)
+	if forRecovery {
+		op.proc.requireSpawnedIdentity = true
+		// The startup factory must not publish ordinary producers until the
+		// journal owner confirms recovery through its explicit runtime lease.
+		op.proc.SetRuntimeRecoveryRequired(true)
+	} else {
+		if adopted, pid := op.proc.AttachIfRunning(); adopted {
+			op.log.Info("reconnected to running sing-box", "pid", pid)
+		}
 	}
 	// A tun inbound cannot survive SIGHUP — every reload path (scheduler
 	// rule-set refresh, tunnel ApplyConfig, orchestrator) routes through

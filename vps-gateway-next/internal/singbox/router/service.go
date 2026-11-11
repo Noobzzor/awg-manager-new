@@ -448,8 +448,13 @@ func (a *routerLoggerAdapter) Info(msg string) {
 }
 
 type ServiceImpl struct {
-	deps   Deps
-	appLog *logging.ScopedLogger
+	// Set only by NewPortableService; nil preserves the original router path.
+	portable               PortableRuntime
+	portableDocuments      EditorDocuments
+	portableGuard          sync.Locker
+	portablePresetRuleSets func(context.Context, Preset) ([]RuleSet, error)
+	deps                   Deps
+	appLog                 *logging.ScopedLogger
 	// bypassLog — журнал набора обхода (подгруппа «Набор обхода»), чтобы итоги
 	// наполнения не терялись в общем потоке singbox-router.
 	bypassLog *logging.ScopedLogger
@@ -676,9 +681,10 @@ func (s *ServiceImpl) ruleSetMaterializer() ruleSetMaterializer {
 		binary = s.deps.Singbox.Binary()
 	}
 	return ruleSetMaterializer{
-		configDir: configDir,
-		binary:    binary,
-		log:       logging.NewScopedLogger(s.deps.AppLog, logging.GroupRouting, logging.SubSingboxRouter),
+		immutableInline: s.portable != nil,
+		configDir:       configDir,
+		binary:          binary,
+		log:             logging.NewScopedLogger(s.deps.AppLog, logging.GroupRouting, logging.SubSingboxRouter),
 	}
 }
 
@@ -688,6 +694,13 @@ func (s *ServiceImpl) ruleSetMaterializer() ruleSetMaterializer {
 // see "what's being edited" rather than "what's currently live". Falls
 // back to an empty config when neither file exists yet.
 func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
+	if s.portableDocuments != nil {
+		data, err := s.portableDocuments.LoadEffective()
+		if err != nil {
+			return nil, fmt.Errorf("load authored router config: %w", err)
+		}
+		return parseRouterConfigBytes(data)
+	}
 	if s.deps.Orch != nil {
 		data, err := s.deps.Orch.LoadEffective(orchestrator.SlotRouter)
 		if err != nil {
@@ -710,6 +723,13 @@ func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
 // self-heal that can persistently flip settings — must judge what is actually
 // running, not what the user has staged and may still discard.
 func (s *ServiceImpl) loadAppliedRouterConfig() (*RouterConfig, error) {
+	if s.portableDocuments != nil {
+		data, err := s.portableDocuments.LoadApplied()
+		if err != nil {
+			return nil, fmt.Errorf("load applied authored router config: %w", err)
+		}
+		return parseRouterConfigBytes(data)
+	}
 	if s.deps.Orch != nil {
 		data, err := s.deps.Orch.LoadApplied(orchestrator.SlotRouter)
 		if err != nil {
@@ -847,6 +867,28 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 	if err := validateNoCompositeCycles(materialized.Outbounds); err != nil {
 		return err
 	}
+	if s.portableDocuments != nil {
+		data, err := json.MarshalIndent(materialized, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal authored router config: %w", err)
+		}
+		applied, err := s.portableDocuments.LoadApplied()
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(applied, data) {
+			if err := s.portableDocuments.DiscardDraft(); err != nil {
+				return err
+			}
+			s.emitStagingEvent("discarded")
+			return nil
+		}
+		if err := s.portableDocuments.SaveDraft(data); err != nil {
+			return err
+		}
+		s.emitStagingEvent("staged")
+		return nil
+	}
 	if s.deps.Orch != nil {
 		// Orchestrator path — write to pending/ (staging). The draft will
 		// be applied explicitly via ApplyStaging. No SIGHUP is triggered
@@ -925,20 +967,34 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 }
 
 func (s *ServiceImpl) withConfig(ctx context.Context, event string, fn func(*RouterConfig) error) error {
-	cfg, err := s.loadRouterConfig()
+	var cfg *RouterConfig
+	err := func() error {
+		if s.portableGuard != nil {
+			s.portableGuard.Lock()
+			defer s.portableGuard.Unlock()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		var err error
+		cfg, err = s.loadRouterConfig()
+		if err != nil {
+			return err
+		}
+		cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+		if err := fn(cfg); err != nil {
+			return err
+		}
+		if err := s.ensureDNSChainOverlayFromState(cfg); err != nil {
+			return err
+		}
+		return s.persistConfig(ctx, cfg)
+	}()
 	if err != nil {
 		return err
 	}
-	cfg = s.ruleSetMaterializer().restoreConfig(cfg)
-	if err := fn(cfg); err != nil {
-		return err
-	}
-	if err := s.ensureDNSChainOverlayFromState(cfg); err != nil {
-		return err
-	}
-	if err := s.persistConfig(ctx, cfg); err != nil {
-		return err
-	}
+	// Runtime status readers may use the same coordinator. Publish only after
+	// releasing it so callbacks cannot deadlock an authoring transaction.
 	s.emitCfgEvent(event, cfg)
 	return nil
 }

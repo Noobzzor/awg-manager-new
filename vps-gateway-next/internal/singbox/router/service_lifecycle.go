@@ -144,6 +144,9 @@ func tunNDMSName(index int) string {
 // mid-Enable that still slips a persist-less orphan through is caught by the
 // description-scan fallback.
 func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
+	if s.portable != nil {
+		return fmt.Errorf("portable routing does not own Keenetic OpkgTun resources")
+	}
 	// s.mu serialises the reap against Enable/Disable: without it the scan can
 	// list a freshly created OpkgTun of a concurrent Enable while its `owned`
 	// snapshot predates that Enable's persist — and delete the live iface.
@@ -625,6 +628,9 @@ func cleanValidateError(err error) string {
 // NOT clear the intent (the watchdog must respect a user's manual stop and not
 // resurrect the daemon on drift), so it calls enableLocked(ctx, false) instead.
 func (s *ServiceImpl) Enable(ctx context.Context) error {
+	if s.portable != nil {
+		return fmt.Errorf("portable routing activation requires its runtime mode transition")
+	}
 	return s.enableLocked(ctx, true)
 }
 
@@ -1284,6 +1290,9 @@ func (s *ServiceImpl) emitRulesEvent() {
 }
 
 func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
+	if s.portable != nil {
+		return s.portable.GetStatus(ctx)
+	}
 	settings, _ := s.deps.Settings.Load()
 	sr := storage.SingboxRouterSettings{}
 	if settings != nil {
@@ -1571,6 +1580,9 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 }
 
 func (s *ServiceImpl) Disable(ctx context.Context) error {
+	if s.portable != nil {
+		return fmt.Errorf("portable routing deactivation requires its runtime mode transition")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1667,6 +1679,9 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 }
 
 func (s *ServiceImpl) Reconcile(ctx context.Context) error {
+	if s.portable != nil {
+		return s.portable.Reconcile(ctx)
+	}
 	// A routing-mode switch (SwitchRoutingMode) holds transitionMu across its
 	// Disable→persist→Enable sequence, during which the persisted state is
 	// transiently half-flipped. Reconcile is a periodic heal — if a switch is in

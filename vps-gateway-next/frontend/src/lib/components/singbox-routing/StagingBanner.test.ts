@@ -2,16 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
 import StagingBanner from './StagingBanner.svelte';
 
-const { stagingWritable } = vi.hoisted(() => {
+const { stagingWritable, loadStaging } = vi.hoisted(() => {
 	const { writable } = require('svelte/store') as typeof import('svelte/store');
 	const stagingWritable = writable<{ hasDraft: boolean; draftedAt?: string } | null>(null);
-	return { stagingWritable };
+	return { stagingWritable, loadStaging: vi.fn() };
 });
 
 vi.mock('$lib/stores/singboxRouter', () => ({
 	singboxRouter: {
 		staging: { subscribe: stagingWritable.subscribe },
+		loadStaging,
 	},
+}));
+
+vi.mock('$lib/components/ui', async () => ({
+	Button: (await import('$lib/components/ui/Button.svelte')).default,
+	Modal: (await import('$lib/components/ui/Modal.svelte')).default,
 }));
 
 vi.mock('$lib/api/client', () => ({
@@ -45,12 +51,13 @@ describe('StagingBanner', () => {
 		expect(getByText('Сбросить')).toBeTruthy();
 	});
 
-	it('clicking Apply calls api.singboxRouterStagingApply', async () => {
+	it('refreshes the draft status after a successful Apply', async () => {
 		stagingWritable.set({ hasDraft: true, draftedAt: '2026-05-11T16:32:00Z' });
 		vi.mocked(apiFn.singboxRouterStagingApply).mockResolvedValue(undefined);
 		const { getByText } = render(StagingBanner);
 		await fireEvent.click(getByText('Применить'));
 		expect(apiFn.singboxRouterStagingApply).toHaveBeenCalledOnce();
+		expect(loadStaging).toHaveBeenCalledOnce();
 	});
 
 	it('on 422 with validation, renders error list inline', async () => {

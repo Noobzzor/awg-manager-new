@@ -1,3 +1,133 @@
+# Original editor client profile
+
+The local original preview now uses the existing client registry and profile handlers. Client mutations share the policy owner gate. The browser shows client creation and lifecycle for this mode, while routing remains in the original editor.
+
+The previous binary refused the client flow. The new Linux build passed client creation, protected AWG configuration export, live peer installation, disable, enable, and revoke. The existing server capability tests passed. An AWG client connected using the exported profile and received HTTPS through WARP. The app restarted, reinstalled the persisted peer, exported byte-identical configuration, and the same profile passed again.
+
+The browser created a test device, opened its profile and rendered the QR code. The attempt to observe a browser download timed out. The same configuration endpoint returned HTTP 200 and the exported profile was independently used in the real connection test. The temporary Docker inventories were verified after cleanup. Phone testing remains pending.
+
+# Original editor real WARP verification
+
+The exact Linux manager binary from the original browser DNS stage was exercised in disposable bridge-network containers with real userspace AWG ingress and the existing encrypted provider profile mounted read-only. Only synthetic probe traffic was sent. Profile plaintext stayed in tmpfs and was removed after initialization.
+
+HTTPS trace phases passed DIRECT/off, WARP/on, provider outage/no delivery with zero direct TCP443 packets, DIRECT/off under the same outage, WARP/on after restoration, and WARP/on after application restart. TLS chains and request nonce identity were checked by the existing AWG probe.
+
+DNS phases passed direct resolver response with measured direct UDP53 packets, WARP-detoured response with provider traffic and no direct UDP53 increment, provider outage with no answer and no direct UDP53 increment, restored WARP DNS response, and DNS response after application restart. Every DNS probe required increasing AWG peer RX. Outage counters confirmed an attempted provider packet was dropped. Separate targets avoided reusing a cached positive response.
+
+Both runtime checks exited zero and verified disposable-container cleanup against the baseline container and volume inventories. Source and runtime logs remain local.
+
+A local candidate image awgm-original-trial:20261111 was built from the pinned existing runtime and the tested manager/AWG binaries. Its exact installed manager entrypoint passed original editor read, WARP catalog, DNS configuration and Apply checks on the isolated synthetic profile. It contains no imported provider or client secrets.
+
+Scope remains the fresh-state original composition. The WARP HTTPS check selected the original default route, while the DNS check selected an original domain DNS rule. Browser GitHub preset selection was verified separately. This is not a single iPhone-to-GitHub-on-VPS end-to-end proof. Existing-state migration, online catalog acquisition and broad original editor operations remain open.
+
+The next proposed trial is a separate fresh-state original-editor container on the already authorized Beget host, with bounded memory, private panel access and a separate test profile/port. Existing working deployment migration is a separate gate. The module AGENTS.md forbids VPS deployment without explicit user override, so this candidate requires a new specific deployment authorization.
+
+# Original editor WARP DNS
+
+The opt-in local preview admits the existing DNS requests needed by the rule wizard. The previous binary returned HTTP 501 on DNS server creation. The rebuilt Linux binary accepted the DNS configuration and Apply on the isolated fixture.
+
+Browser verification created GitHub through WARP. The wizard created both resolvers, set DNS globals, added the matching DNS rule, and applied the draft. All six mutation requests returned HTTP 200. The API confirmed geosite-github selects dns-tunnel, dns-tunnel uses detour warp, and hasDraft=false. The browser showed the tunnel resolver. The test container was removed and existing Docker inventory matched.
+
+This verifies local authoring and application on a synthetic WARP profile. Actual DNS and HTTPS traffic through Cloudflare and behavior during outage remain open.
+
+# Original editor WARP choice — 2026-11-09
+
+The local opt-in original editor now lists WARP when its owned endpoint matches its encrypted profile. A fresh original state can bootstrap from a private WARP profile file named by AWG_ORIGINAL_WARP_PROFILE_FILE. Existing state is checked against its owned slot, and a mismatch refuses startup. No profile is included with the build. Only the outbound tag and label are exposed to the browser.
+
+The previous app returned 501 for the outbound catalog. The Linux backend and rebuilt embedded panel passed the isolated acceptance. In the browser the original GitHub template was selected, then Through tunnel and WARP. The rule was saved and applied. The API returned hasDraft=false, geosite-github, and outbound=warp. Existing Docker inventories matched after cleanup.
+
+The wizard's automatic DNS server creation returned 501. This check used a synthetic profile and a private network without internet access. DNS behavior, provider handshake, actual traffic and outage behavior for this original-editor composition remain open. Next, connect the supported DNS path and verify the applied WARP rule with real traffic.
+
+# Original browser Apply feedback — 2026-11-09
+
+The original routing editor now refreshes staging status after a successful Apply. The focused component regression reproduced the missing refresh (1 failed, 5 passed) and passed after the fix (6 passed). The frontend build and Linux embedded app build succeeded.
+
+The disposable browser test opened a prepared GitHub BLOCK above DIRECT draft. A click on Apply returned HTTP 200, the banner disappeared without a page reload, and the API confirmed hasDraft=false and the saved BLOCK, DIRECT order. The exact test container was removed and the existing container and volume inventories matched.
+
+This verifies the one local browser scenario with the pinned GitHub asset. Online rule-set acquisition, additional egress paths and VPS rollout are separate.
+
+# Original browser preview
+
+The opt-in local preview opened the existing sing-box routing editor with 77 templates. GitHub was selected from the catalog, added as BLOCK using the preseeded pinned original asset, dragged above the DIRECT rule, and applied. The move and Apply returned HTTP 200. The server reported hasDraft=false and BLOCK before DIRECT. Reload showed the saved order without the draft banner.
+
+The banner remained stale immediately after Apply. The next targeted change is to refresh the draft status after successful Apply. Online acquisition and additional egress paths remain open. Browser verification used a disposable local container with expert settings. Container and volume inventories matched after cleanup.
+
+# Original GitHub preset — 2026-11-09
+
+The local original application applied the catalog GitHub preset using the pinned original file, changed priority and retained the result after restart. The native matcher recognized github.com. Controlled AWG TCP verified the GitHub Host policy and the nonmatching control. Online acquisition and browser acceptance remain open.
+
+# Original local rule-set files — 2026-11-09
+
+The local original editor now admits inline rule sets compiled by its existing materializer. Native merge output is checked and owned binary assets are copied into the private generation with content hashes reverified at live confirmation. Actual AWG TCP blocked after Apply and restart. Rule-order and journal controls passed again. 2097 passed leaves in 4 packages. The original GitHub asset was acquired and natively decoded. Catalog application and browser acceptance remain open.
+
+# Original local rule priority — 2026-11-09
+
+The experimental local composition admits the original list/add/move handlers. Actual AWG TCP verified conflicting IP/port rules, staged reorder preserving the live decision, explicit Apply changing delivery, and order persistence across clean restart. 1592 passed leaves in three affected packages. Browser and preset assets remain open.
+
+# Original local Apply milestone — 2026-11-09
+
+The real local main now selects the experimental original editor and applies DIRECT/BLOCK/DIRECT to an owned immutable sing-box generation. Original API catalogs return 87 overall and 77 router-applicable entries. Actual isolated AWG TCP delivery, clean restart retaining BLOCK, and cold prepared/accepted journal recovery passed. The browser capability stays gated pending the original card and drag-order flow, asset-backed rules, DNS and migration checks.
+
+# Local startup owner WIP — 2026-11-09
+
+Actual local main now holds an exclusive DataDir policy-owner lease before setupCore/settings/auth, through all LIFO cleanup. CLI cleanup and gateway HTTP use the same owner boundary. Fresh original marker claim is implemented only at the low-level API; production original factory remains unwired. Focused23, full Linux 8853 qualified passed leaves/138 packages, 53 explicit skips,3 known raw failures separately NET_RAW pass; fresh vet/embed build and actual-app refusal/panel-lifetime controls pass. Same-DataDir/cooperating-version scope only; external roots, partial initial claim, existing-data handoff, full runtime binding and original Apply/UI remain open. VPS/frozen package unchanged. See docs/original-startup-owner-wip-2026-11-09.md.
+
+# Original recovery WIP — 2026-11-09
+
+Uncommitted Task2 preparation: cold construction/read-only slot discovery plus spawned-child lifecycle identity, pidfd signals, lost-PID duplicate prevention and denied-stop preservation verified. Full Linux 8830 qualified passed leaves/138 packages, 50 explicit skips; only3 known raw permission failures, separately NET_RAW pass. Fresh vet/embed build, native recovery4 and legacy Process controls pass. Actual original factory/HTTP Apply, durable ownership and full generation/asset/controller binding remain unimplemented; editor/VPS/frozen archive unchanged. See docs/original-recovery-wip-2026-11-09.md.
+
+# Legacy owner admission checkpoint — 2026-11-08
+
+Legacy gateway mutations now take the actual app.localConfigGate and check persisted owner before dispatching client/profile/group/subscription/WARP handlers. Unknown/original state refuses local legacy construction before NewOperator reconcile/adoption. Absent owner root preserves existing gateway behavior; reads are preserved. 28 focused RED/GREEN controls pass. Full Linux 8808 qualified passed leaves/138 packages, exits [1, 1, 0] only3 known raw permission tests, separately NET_RAW pass; 46 explicit skips retained. Fresh vet/build and native Process/generation/SRS/raw controls pass. The fresh application binary also refuses original/unknown/unclaimed startup before sing-box tree creation. This is Task1 admission only: no owner is claimed, no interprocess exclusivity/durable handoff or original startup/recovery factory implemented. Original HTTP Apply/runtime binding/UI/AWG/TUN vertical remains open; editor, VPS, frozen package and frontend unchanged. See docs/original-owner-admission-2026-11-08.md.
+
+# Generation library checkpoint — 2026-11-08
+
+Runtime JSON generation preparation and context-bound live witness verification are now implemented in the existing singbox package. Preparation preserves numeric values, rejects ambiguous/reserved/default-changing inputs and appends one unused direct marker. Verification rejects stale/missing/mismatched/competing witnesses, request cancellation/deadline, malformed/trailing/oversized/deep responses. JSON nesting is bounded at128 and HTTP bodies at4MiB. 30 focused controls passed; complete Linux suite 8780 qualified passed leaves in 138 packages, exits [1, 1, 0] only three known raw-socket permission tests, all three separately NET_RAW pass. 46 explicit skips include the newly opt-in native generation test. Fresh vet/build, native generation library DIRECT/BLOCK/DIRECT and stale-file controls, existing actual Process, real SRS compiler/matcher and raw controls pass. No existing launch path enables these primitives yet: full renderer/process/controller/asset binding, exclusive policy ownership, startup recovery/durable root and PortableRuntime/original UI/AWG/TUN acceptance remain open. Editor capability, frontend, frozen archive and VPS unchanged. See docs/original-generation-witness-design-2026-11-08.md.
+
+# Generation witness feasibility — 2026-11-06
+
+After the verified SRS checkpoint, two disposable real-engine controls identified configuration-derived direct/selector tags via Clash API and rejected disk-only/unstarted generations with real loopback DIRECT/BLOCK/DIRECT. Candidate only: no product ConfirmRunning implementation, owner/startup/TUN or original UI integration claim. Product code and the 8750-test SRS verification remain unchanged. See docs/original-runtime-attestation-spike-2026-11-06.md.
+
+# Portable artifact checkpoint — 2026-11-06
+
+Portable source and compiled artifacts plus publication directories sync before acceptance, including cached artifacts and retries. Portable GC retains all versions while known journal recovery is unresolved under the shared writer gate. Nine focused controls pass; complete Linux coverage: 8750 qualified passed leaves in 138 packages, group exits [1, 1, 0] only for three known socket-permission tests; all three pass separately with NET_RAW. 45 explicit skips retained. Fresh Linux vet/build, actual Process/sing-box and inline compiler/matcher controls pass. No physical power-cut or product AWG/TUN/VPS acceptance claim. Startup recovery-before-adoption/GC, durable config-root creation, exclusive owner/runtime attestation and original editor integration remain open. Editor capability, frontend, frozen package and VPS unchanged. See docs/original-srs-durability-design-2026-10-31.md.
+
+# Active local mutation checkpoint — 2026-10-31
+
+Settings Update and root tunnel mutations/live selector/Uninstall now join the shared local writer gate before state changes. Internal tunnel apply does not re-enter admission; settings keep existing persistence-on-apply-error behavior. 15 new controls (RED11 plus4 preserved controls to GREEN15); final full Linux 8741 qualified passes across 138 packages, exits [1, 1, 0] only3 known socket-permission tests; all3 fresh NET_RAW pass, 45 explicit skips retained. Fresh vet/build and actual Process/sing-box control pass. See docs/original-active-mutation-coordination-2026-10-31.md. Ownership/handoff, runtime attestation, pre-adoption recovery/SRS pins and PortableRuntime/original UI/AWG acceptance remain open; original editor capability, VPS, frozen package and frontend unchanged.
+
+# Full writer verification — 2026-10-31
+
+The previously incomplete writer checkpoint full Linux suite is complete across three disjoint sequential groups covering all 138 freshly enumerated packages: 8726 passed leaf tests; group exits [1, 1, 0] only for three known raw-socket permission tests, all three separately pass NET_RAW. 45 explicit skips match the previous completed suite. Fresh actual Process/sing-box proof passes. Runtime/Go/frontend bytes and prior build binary unchanged; no fresh build claimed. See docs/original-writer-full-verification-2026-10-31.md. Original editor capability remains disabled; active tunnel/settings/uninstall, owner/startup/PortableRuntime/UI/AWG work remains open. VPS/frozen package unchanged.
+
+# Writer lifecycle checkpoint — 2026-10-28
+
+Actual local constructor wiring now coordinates ordinary/debounced reload, manual control and watchdog reconciliation with app.localConfigGate. Close cancels queued debounce admission before joining callbacks; transaction-owned RuntimeLease activation does not reacquire the gate. 14 new controls; affected Linux packages 928 passed leaves / three package PASS outcomes (parent timed out later during build); vet/build successful. Fresh real-engine loopback Process proof and three separate NET_RAW controls passed. FULL REPOSITORY VERIFICATION INCOMPLETE: two 600-second timeouts; previous full result belongs to parent 8840bbf. See docs/original-writer-lifecycle-2026-10-28.md. Active tunnel/settings/uninstall, ownership/startup/PortableRuntime and original UI/AWG acceptance remain open. Capability, VPS, frozen archive and frontend unchanged.
+
+# Subscription writer checkpoint — 2026-10-27
+
+Subscription/group service operations and scheduled refresh now join app.localConfigGate, with context-aware HTTP Update admission and existing batch/rollback semantics preserved.24 new controls, full Linux8712passes/exit1 with only the same3 socket permission failures; all3 separately pass NET_RAW; vet/build0. Ordinary reload/manual intent/settings/installer and owner/startup/original editor/UI/AWG acceptance remain open. See docs/original-subscription-coordination-2026-10-27.md. VPS/frozen archive/frontend unchanged.
+
+# Local producer coordination checkpoint — 2026-10-27
+
+DNS service transactions, AWG3 HTTP mutations and expert user-slot mutation/check operations now share one local writer coordinator, retaining existing rollback/store boundaries.24 targeted controls; affected Linux3976/vet/build0. Full8688/exit1 with the same3 socket permission failures, all3 separately pass CAP_NET_RAW only. Subscription batches/groups, manual settings/intent, installer, exclusive owner/startup recovery and actual original editor/runtime/UI/AWG acceptance remain open. See docs/original-producer-coordination-2026-10-27.md. VPS/frozen package/frontend unchanged.
+
+# Local process lifecycle checkpoint — 2026-10-24
+
+Per-Process mutation lease now composes with RuntimeLease and protects direct Operator/watchdog process calls, including adoption's conditional stop. Recovery blocks ordinary starts/reloads; leased recovery and explicit stop remain possible. Affected Linux:3339 leaf passes, vet/build0; full:8664passes/exit1 with3 socket permission failures, all3 separately pass CAP_NET_RAW only. Real Process/sing-box DIRECT/BLOCK/recovery and prior split journal controls pass. Complete producer/manual-intent/installer coordination and original editor startup/UI/AWG gates remain open. See docs/original-process-lifecycle-2026-10-24.md. No capability/VPS/frozen package change.
+
+# Local runtime backend checkpoint — 2026-10-24
+
+Journaled canonical+18/20 SlotApplyBackend, lifecycle lease, required native validation, durable slot metadata and unresolved-recovery reload barrier verified locally. Affected Linux:2897 package-qualified leaf passes, vet/build0. Full command:8649passed/exit1 with3 socket permission failures; all3 separately pass with CAP_NET_RAW only. Actual sing-box loopback adapter/rollback/recovery controls pass; no product AWG/TUN or startup wiring claim. See docs/original-slot-runtime-2026-10-24.md. Full port remains in progress; no capability flip/VPS update.
+
+# Original port progress checkpoint — 2026-10-23
+
+Task1 complete: original 87-preset catalog proven in actual embedded local app startup. Portable editor/runtime boundary and shared original HTTP routes verified. Pure original RouterConfig→gateway projection verified, including real sing-box schema and loopback rule-engine isolation control. Final affected Linux gate: 2,623 leaf passes plus vet exit0. Concrete apply/rollback/recovery, DNS/slot ownership, startup/editor capability, browser/AWG packet acceptance and whole-branch review remain open. No VPS deployment or release. See docs/original-router-projection-2026-10-23.md and docs/original-editor-foundation-2026-10-23.md.
+
+# Local catalog source checkpoint — 2026-10-23
+
+Original catalog HTTP route restored in portable mode. Linux RED→GREEN:7new leaf tests;1319affected leaf passes;vet exit0. Full editor/platform/apply port remains in progress. No live VPS/image update. See docs/original-catalog-port-2026-10-23.md.
+
 # Оперативный статус
 
 Latest checkpoint: **2026-10-21 iPhone DIRECT browsing confirmed; DNS export fixed and owned VPS upgraded**. RED/GREEN87 targeted tests, Linux vet/build0, clean independent review, exact-image entrypoint/API/persistence and7-phase local384MiB UDP/WARP PASS. Same VPS data/phone identity/policy retained, existing sites/database unchanged. Full Linux suite: 8488 passed leaf tests; native exit 1; FAIL: TestByInterface_LoopbackRoot, TestConfDisabled_SuppressedWhenNDMSBouncesBackToRunning. ICMP raw socket refused by cap-drop ALL runner; NDMS settle test failed and is unresolved. Neither package was changed. Full-suite PASS is NOT claimed.. User confirmation after upgrade and controlled device DIRECT/BLOCK/DIRECT, DNS/IPv6/no-bypass/WARP/full product acceptance remain OPEN. Evidence: scripts/m2-local-20261021/codex-client-dns-66ef0989. Earlier checkpoints below are historical.
@@ -257,3 +387,25 @@ DONE only for bounded single-IPv4 HTTPS/TCP fail-closed proof; not whole M2/prod
 HOLD_REAL_AWG_UDP_QUEUE_COUNTER_ATTRIBUTION. First DIRECT phase produced actual connected UDP STUN reply with correct fresh transaction/strict parsing, fresh AWG handshake/RX308/kernel ingress2, Sent2/direct UDP3478 packets2, stable policy/engine/firewall. QueueDelta0 violates current strict NFQUEUE gate. Native/parent1/OOMfalse; complete UDP acceptance refused. UDP BLOCK/WARP-up/outage/no-DIRECT/restoration NOT REACHED. No product-path failure inference: exact counter applicability/attribution unresolved; helper selects first global queue regex without family/table/chain. Next bounded task: diagnose relevant forwarded AWG UDP counters, reproduce selector/applicability problem, RED/GREEN fix; do not simply drop requirement.
 
 Prior HTTPS BLOCK/WARP-outage/restoration PASS retained. STUN tests3/3 + inherited HTTPS6/6 cached, manager14/14, wrapper4/4, Linux vet/build0; observed RED before implementation. Fresh review Critical0 Important0, Minor stale private scope string deferred. Single runtime, actual monitor table/app/children/socket/TUN cleanup, exact Docker absence/protected8 retained. No registration/settings/host/VPS/Git/product-source/binary changes. Evidence: scripts/m2-local-20261013/codex-real-warp-udp-66ef0989/AWG-REAL-WARP-UDP-REPORT-2026-10-13.md. Public mapped addresses/raw runtime logs not retained. Scope single IPv4 STUN transport reply, not crypto service identity/general UDP/full product/user-device/UI/VPS acceptance. Full product scope unchanged.
+
+## 2026-10-23 — original editor apply/recovery foundation (partial port)
+
+Verified local foundation: original editor drafts share an explicit apply coordinator; projected staging delegates to portable runtime. Portable inline SRS artifacts are content-addressed, so editing a draft cannot replace the applied binary; GC retains applied/draft paths. Added private checksummed prepared/accepted journal, cancellation-safe rollback, recovery, explicit activation AND confirmation contract, and strict directory-sync error propagation.
+
+Linux affected suites: 2,645 leaf tests passed; vet exit0. Separate real sing-box controls passed: DIRECT baseline, invalid-candidate refusal, activation-failure rollback, prepared recovery, accepted recovery BLOCK, DIRECT restoration; actual SRS compile/match preserved old and new content. These use loopback mixed ingress and simulated interruption/fresh backend and engine instances. They are NOT product orchestrator/AWG/TUN, full-manager power-loss, per-client DNS isolation or full-suite acceptance. Historical two full-suite failures remain unclosed.
+
+Task1 catalog complete (87 original presets); Tasks2/3 remain partial. Concrete runtime/orchestrator adapter, single rule ownership, DNS/other-slot priority, all-writer coordination, recovery-before-GC, startup/status/browser and exact-image real AWG packet gates remain OPEN. Capability stays disabled. No live VPS, frozen ZIP or original frontend changes. Installer deferred; full product scope and attribution preserved. Whole-branch fresh review remains pending until the full plan is implemented.
+
+Evidence: `apply-durability-final-05a02487-76ab-4ab6-8685-6c5f41981152.json`, `confirmed-apply-native-603c5148-a75c-4144-936d-34d0afba50ce.json`, `confirmed-inline-native-e4998a74-b036-4e89-834a-bd80ff41f27e.json`. RED/GREEN history retained in local execution ledger.
+
+## 2026-10-23 — split runtime projection and canonical editor (partial port)
+
+Implemented18 ingress/sniff/DNS prefix plus20 scoped original rules/resources/fallback, preserving19 DNS-route precedence. New read-only CheckMergedBatch validates joint candidate slots and untouched active siblings, without pruning, commit/toggle/reload. Canonical editor applied/draft documents now live in a separate private store; original CRUD/discard cannot overwrite derived engine20. Portable external rename delegates to runtime transaction before legacy side effects.
+
+Affected Linux suites: 2862 package-qualified leaf passes; vet/build exit0. Full repository command exit1: 8615 package-qualified leaf passes; failed: TestByInterface_LoopbackRoot, TestOpenPacketSocketsFailsAtomically, TestReadPacketStatisticsOnLoopbackSocket. All three failed socket tests passed separately with only CAP_NET_RAW added in a network-none owned container. This closes the identified permission mismatch for those tests; the original full command remains exit1, not a single full-suite PASS. Historical failures and raw local evidence retained.
+
+Real sing-box control: split TUN schema accepted; joint CheckMergedBatch accepts projected slots and refuses invalid outbound type without changing live20; five loopback mixed-input order phases preserve19-before20, first-match card ordering and unrelated-input access. This is NOT AWG/TUN product traffic, actual DNS resolution/isolation, whole-manager power-loss, image/browser/VPS acceptance. Native controls are separate from normally skipped env-gated tests.
+
+Task1 catalog complete; Tasks2/3 still partial. Concrete transactional runtime adapter, all-writer/reload coordination, owner handoff, running-state confirmation, recovery-before-GC, outbound catalog wiring and startup/browser/exact-image AWG gates remain OPEN. Capability stays disabled. No frontend, live VPS, frozen archive or installer changes. Whole-branch fresh review remains pending.
+
+Evidence: `owner-final-gate-570ecd1a-529c-4d12-8f62-e41225bbd986.json`, `owner-full-suite-f98f184d-11a0-4bce-8237-43cd95e809a9.json`, `confirmed-owner-native-75ee29c2-458e-4bfa-a072-d9f963f56c43.json`, `owner-raw-controls-db60b039-e7b2-47ac-aabf-419af0412eb8.json`. Count audit uses (package,test) identity; previous runner's name-only totals may undercount duplicate names across packages.

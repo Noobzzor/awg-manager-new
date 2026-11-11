@@ -1,0 +1,9 @@
+# Writer checkpoint full verification — 2026-10-31
+
+Full Linux verification of parent ead6a6f8eee2e829d93fd09db07e5474f8ce66e5 is now complete across three disjoint sequential groups. A fresh go list under the pinned Go image/vendor environment enumerated 138 packages; every package produced a terminal outcome against identical source pins. 8726 package-qualified passed leaf tests. Group command exit codes: [1, 1, 0]; the only three failing tests require raw-socket permission and all three pass in a separate fresh NET_RAW-only container. 45 explicitly skipped tests match the previous completed suite; their absence is not presented as product acceptance.
+
+A fresh actual Process/orchestrator/sing-box loopback proof also passed DIRECT/BLOCK/DIRECT, recovery/readiness and queued reload/manual-stop admission controls. This remains an isolated mixed-ingress control, not AWG/TUN/iPhone/VPS acceptance. The previous build/vet receipt is retained as prior evidence: all Go/runtime/frontend source bytes and the built binary hash are unchanged; this stage did not rebuild or change application behavior. Only the four previously committed status/doc files differ from that build snapshot.
+
+This closes the incomplete full-repository verification of the writer lifecycle checkpoint. It does not complete the original editor port or enable its capability. Next: coordinate active tunnel/settings/uninstall operations, exclusive policy ownership/handoff, actual running-state confirmation, recovery before adoption/producers/GC and immutable SRS journal pins, then concrete PortableRuntime and original UI/exact-image AWG acceptance. The legacy installer is not exposed by local startup.
+
+No VPS, working VPN, frozen archive or frontend change. Protected resources preserved and owned containers removed. Whole-plan fresh review remains due at completion.

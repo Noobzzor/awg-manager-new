@@ -49,14 +49,13 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:2222:/home/USER/.local/share/awg
 
 ## Сборка из исходников
 
-Готовый образ можно использовать сразу после импорта. Если нужно изменить код,
-сборка из исходников по-прежнему использует старый образ как источник трёх
-туннельных бинарников и их лицензий. Финальный образ собирается на чистом Debian.
+Выполни команды из раздела запуска, начиная с `export AWG_PREVIEW_DIR`.
+Перед запуском выполни `unset AWG_PREVIEW_IMAGE` и `docker compose build awg`.
+Docker соберёт панель, sing-box и AmneziaWG из исходников. Для первой сборки
+нужен интернет, чтобы скачать зависимости и инструменты компиляции.
 
-1. Загрузи `install/image.tar.gz` из архива AWG от 23 октября командой
-   `docker load -i install/image.tar.gz`. Тег базы — `awgm-personal-trial:20261021-dns1`.
-   Ожидаемый ID — `sha256:2178524bc069afd4aa2c5b639e6acb73154f96a24247db07c33d685fa0b89929`.
-2. Из исходников открой `vps-gateway-next/docker/original-preview`. Выполни
-   команды из раздела запуска, начиная с `export AWG_PREVIEW_DIR`.
-   Перед запуском выполни `unset AWG_PREVIEW_IMAGE` и `docker compose build awg`.
-   Для скачивания зависимостей при сборке нужен интернет.
+Для сборки без Compose из папки `vps-gateway-next`:
+
+```sh
+docker build --platform linux/amd64 --target original-preview -t awgm-original-preview:local .
+```

@@ -1,0 +1,88 @@
+--- a/device/send.go
++++ b/device/send.go
+@@ -346,11 +346,23 @@
+ 
+ 		// read packets
+ 		count, readErr = device.tun.device.Read(bufs, sizes, offset)
++		// Configuration may change while Read waits for its first packet.
++		// Relocate payloads before queuing so their front padding matches
++		// the transport parameters applied during that wait.
++		readOffset := offset
++		padding = device.paddings.transport.Load()
++		offset = MessageTransportHeaderSize + int(padding)
+ 		for i := 0; i < count; i++ {
+ 			if sizes[i] < 1 {
+ 				continue
+ 			}
+ 
++			if offset+sizes[i] > len(bufs[i]) {
++				continue
++			}
++			if offset != readOffset {
++				copy(bufs[i][offset:offset+sizes[i]], bufs[i][readOffset:readOffset+sizes[i]])
++			}
+ 			elem := elems[i]
+ 			elem.packet = bufs[i][offset : offset+sizes[i]]
+ 			elem.padding = padding
+--- a/ipc/uapi_linux.go
++++ b/ipc/uapi_linux.go
+@@ -34,8 +34,9 @@
+ }
+ 
+ func (l *UAPIListener) Close() error {
+-	err1 := unix.Close(l.inotifyFd)
+-	err2 := l.inotifyRWCancel.Cancel()
++	// Cancel before closing the watched fd: the watcher owns the cancel pipes.
++	err1 := l.inotifyRWCancel.Cancel()
++	err2 := unix.Close(l.inotifyFd)
+ 	err3 := l.listener.Close()
+ 	if err1 != nil {
+ 		return err1
+@@ -59,7 +60,9 @@
+ 	}
+ 
+ 	if unixListener, ok := listener.(*net.UnixListener); ok {
+-		unixListener.SetUnlinkOnClose(true)
++		// Pathname cleanup belongs to the external owner after child join.
++		// Close must not unlink a foreign replacement of the original socket.
++		unixListener.SetUnlinkOnClose(false)
+ 	}
+ 
+ 	uapi := &UAPIListener{
+--- a/ipc/uapi_unix.go
++++ b/ipc/uapi_unix.go
+@@ -8,7 +8,6 @@
+ package ipc
+ 
+ import (
+-	"errors"
+ 	"fmt"
+ 	"net"
+ 	"os"
+@@ -47,20 +46,14 @@
+ 	defer unix.Umask(oldUmask)
+ 
+ 	listener, err := net.ListenUnix("unix", addr)
+-	if err == nil {
+-		return listener.File()
+-	}
+-
+-	// Test socket, if not in use cleanup and try again.
+-	if _, err := net.Dial("unix", socketPath); err == nil {
+-		return nil, errors.New("unix socket in use")
+-	}
+-	if err := os.Remove(socketPath); err != nil {
+-		return nil, err
+-	}
+-	listener, err = net.ListenUnix("unix", addr)
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	// Neither a failed bind nor a failed dial establishes pathname ownership.
++	// Refuse every existing path; the external owner handles stale sockets.
++	// Disable unlink before duplicating or closing the original listener so
++	// both descriptor handoff and later shutdown preserve foreign replacements.
++	listener.SetUnlinkOnClose(false)
++	defer listener.Close()
+ 	return listener.File()
+ }

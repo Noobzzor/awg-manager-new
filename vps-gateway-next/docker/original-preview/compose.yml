@@ -5,7 +5,8 @@ services:
     platform: linux/amd64
     build:
       context: ../..
-      dockerfile: docker/original-preview/Dockerfile
+      dockerfile: Dockerfile
+      target: original-preview
     init: true
     restart: unless-stopped
     cap_drop: [ALL]

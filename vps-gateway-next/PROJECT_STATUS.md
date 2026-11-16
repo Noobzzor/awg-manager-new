@@ -1,3 +1,25 @@
+# Debian release candidate — 2026-11-15
+
+The Debian amd64 trial archive AWG-Debian-RC-2026-11-15.zip contains the current manager and rebuilt frontend on the verified November 12 runtime base. Fresh-volume Compose health, panel Unix socket, AWG profile export, all 77 catalog entries, cold-cache YouTube policy Apply and disposable cleanup passed. ZIP integrity passed. SHA-256 f8d384c3dbaa6239cfbfaa73a52df4e4758cb4f73a4254987a3a591d877935af. Full clean rebuild of the underlying sing-box runtime was still running at packaging time. External Debian VPS installation and a physical device are the next acceptance step. Arbitrary VPN exits and migration remain open.
+
+# Original catalog online acquisition — 2026-11-12
+
+Current local preview applies a catalog service to an already configured WARP exit through the original editor API. One isolated run confirmed the active Twitch rule selects WARP, the default remains DIRECT and the draft clears. This used a synthetic WARP profile and preloaded rule set. The original-mode WARP profile is still supplied at initial startup, and arbitrary VPN exits are not exposed by its outbound catalog.
+
+The local original editor now accepts all 77 router-applicable built-in presets. The four exceptional SagerNet filenames use explicit pins. The 18 presets pointing to the unreachable catalog host use the corresponding files from the author's rulesets repository at commit 2879d42b8a701cae7f1caf886e403e02ba40ed22, with pinned SHA-256 and the original catalog identities. Byte equality with the unreachable host was not checked. Native sing-box read all 77 files and the Linux catalog test verified all 77 identities. A separate offline run staged and applied all 77 rules and verified the active tags and empty draft. An online cold-cache test verified the YouTube download, digest, native youtube.com match and Apply.
+
+November 14 batch expansion: 55 of 77 router presets share the verified SagerNet ID/tag/URL convention. Their current payloads were downloaded, pinned and decompiled by native sing-box. The Linux catalog test checked every pin against the actual embedded catalog and rejected substituted URLs. One offline run with preloaded files staged all 55 presets using the original API, applied them together and verified all active tags, an empty draft and disposable cleanup. This run used 512 MiB after the initial 384 MiB container exited before API readiness; the cause of that first exit was not established. Four other SagerNet presets have exceptional tag or file names and 18 presets use the alternate catalog host.
+
+Spotify also passed browser selection, save, Apply and reload using the preloaded pinned set. A separate isolated Linux packet test exercised Spotify's scdn.co via real AWG, confirmed DIRECT delivery, BLOCK by priority, continued delivery for a nonmatching domain and BLOCK after restart.
+
+Spotify now uses the original catalog's SagerNet rule-set alongside GitHub and Twitch. The Linux manager downloaded all three with an empty cache, verified native domain matching, applied the rules through the original API and retained the selected order after restart. The original YouTube source failed its TLS handshake from the test environment.
+
+November 14 follow-up: selected Twitch from the original browser catalog, saved it as BLOCK, moved it to first priority with the keyboard drag controls, applied and verified the order after reload. Mouse drag did not move the card in this run. In a separate isolated Linux container, real AWG TCP with a Twitch Host header was delivered under DIRECT priority and blocked under BLOCK priority, while a nonmatching request still reached the sink. BLOCK persisted after restart.
+
+The original editor now resolves GitHub and Twitch from their catalog sources on a cold cache. A Linux run with the real manager and sing-box downloaded both pinned files, confirmed each domain match with the native engine, applied both rules through the original API, and preserved their reordered priority across restart. The probe reproduced and fixed a write-permission failure that affected the pre-existing GitHub downloader. The cache files retain mode 0400 and the Linux storage tests passed.
+
+The disposable test container was removed. The Twitch check did not send packets from an AWG client or exercise browser drag-and-drop. YouTube and Discord use another catalog source that this environment could not reach.
+
 # Original editor client profile
 
 The local original preview now uses the existing client registry and profile handlers. Client mutations share the policy owner gate. The browser shows client creation and lifecycle for this mode, while routing remains in the original editor.

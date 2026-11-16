@@ -397,3 +397,8 @@ Real sing-box control: split TUN schema accepted; joint CheckMergedBatch accepts
 Task1 catalog complete; Tasks2/3 still partial. Concrete transactional runtime adapter, all-writer/reload coordination, owner handoff, running-state confirmation, recovery-before-GC, outbound catalog wiring and startup/browser/exact-image AWG gates remain OPEN. Capability stays disabled. No frontend, live VPS, frozen archive or installer changes. Whole-branch fresh review remains pending.
 
 Evidence: `owner-final-gate-570ecd1a-529c-4d12-8f62-e41225bbd986.json`, `owner-full-suite-f98f184d-11a0-4bce-8237-43cd95e809a9.json`, `confirmed-owner-native-75ee29c2-458e-4bfa-a072-d9f963f56c43.json`, `owner-raw-controls-db60b039-e7b2-47ac-aabf-419af0412eb8.json`. Count audit uses (package,test) identity; previous runner's name-only totals may undercount duplicate names across packages.
+# Original online catalog — 2026-11-12
+
+- Linux regression test failed for the previously unsupported Twitch catalog identity, then passed for GitHub, Twitch and rejection of substituted URLs.
+- Fresh-state original manager in a disposable Docker bridge container reproduced a permission failure writing the first read-only preset file. After the fix, the Linux storage suite and the original API integration test passed. GitHub and Twitch downloaded from the catalog source, both binary sets matched their expected domains in native sing-box, and both applied rules survived restart in reordered priority. The owned test container was removed.
+- Browser interaction and live AWG client packets for Twitch remain to be checked.

@@ -1,3 +1,11 @@
+# VPN exit in the original VPS editor — after the Debian candidate trial
+
+Reuse the existing AWG configuration importer, endpoint service and panel form. Connect them to the original VPS mode's policy owner and outbound catalog so a user can import one named AmneziaWG client profile and select it for a service. Use the existing sing-box routing engine and keep the current device profile when changing the selected exit.
+
+Acceptance is one flow on an isolated installation. Import the second AWG profile in the panel and assign it to an existing service template. Confirm that matching traffic uses the selected exit and a control destination follows DIRECT. Disable the exit and confirm that matching traffic stops while the DIRECT control still works. Verify that the rule and exit are restored after a restart. Keep imported keys out of panel responses and logs.
+
+Reference: [AWG Router's cascade design](https://habr.com/ru/articles/1107904/). Its separation of client ingress and named exits, and explicit behavior on outage, inform the flow above. Load balancing and rate limiting are outside this slice.
+
 # Local startup owner WIP — 2026-11-09
 
 Actual local main now holds an exclusive DataDir policy-owner lease before setupCore/settings/auth, through all LIFO cleanup. CLI cleanup and gateway HTTP use the same owner boundary. Fresh original marker claim is implemented only at the low-level API; production original factory remains unwired. Focused23, full Linux 8853 qualified passed leaves/138 packages, 53 explicit skips,3 known raw failures separately NET_RAW pass; fresh vet/embed build and actual-app refusal/panel-lifetime controls pass. Same-DataDir/cooperating-version scope only; external roots, partial initial claim, existing-data handoff, full runtime binding and original Apply/UI remain open. VPS/frozen package unchanged. See docs/original-startup-owner-wip-2026-11-09.md.
@@ -327,3 +335,6 @@ Real sing-box control: split TUN schema accepted; joint CheckMergedBatch accepts
 Task1 catalog complete; Tasks2/3 still partial. Concrete transactional runtime adapter, all-writer/reload coordination, owner handoff, running-state confirmation, recovery-before-GC, outbound catalog wiring and startup/browser/exact-image AWG gates remain OPEN. Capability stays disabled. No frontend, live VPS, frozen archive or installer changes. Whole-branch fresh review remains pending.
 
 Evidence: `owner-final-gate-570ecd1a-529c-4d12-8f62-e41225bbd986.json`, `owner-full-suite-f98f184d-11a0-4bce-8237-43cd95e809a9.json`, `confirmed-owner-native-75ee29c2-458e-4bfa-a072-d9f963f56c43.json`, `owner-raw-controls-db60b039-e7b2-47ac-aabf-419af0412eb8.json`. Count audit uses (package,test) identity; previous runner's name-only totals may undercount duplicate names across packages.
+# Original catalog — 2026-11-12
+
+GitHub and Twitch cold-cache downloads, native matching, original editor Apply and reorder persistence have passed in Linux. Next, exercise Twitch through the browser and the controlled AWG packet fixture, then verify additional catalog sources as they become reachable.

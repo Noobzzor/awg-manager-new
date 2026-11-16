@@ -42,6 +42,10 @@ func TestNativeOriginalApplyThroughApplication(t *testing.T) {
 	defer cancel()
 	var packet *originalPacketFixture
 	wan := "lo"
+	onlinePresets := os.Getenv("AWGM_NATIVE_ORIGINAL_ONLINE_PRESETS") == "1"
+	if onlinePresets {
+		wan = "eth0"
+	}
 	if os.Getenv("AWGM_NATIVE_ORIGINAL_PACKET") == "1" {
 		packet = startOriginalPacketFixture(t, ctx)
 		wan = "fixture0"
@@ -52,6 +56,9 @@ func TestNativeOriginalApplyThroughApplication(t *testing.T) {
 		"AWG_GATEWAY_INTERFACE=m2oa0", "AWG_GATEWAY_PORT=51820", "AWG_GATEWAY_CLIENT_POOL=10.77.0.0/30", "AWG_GATEWAY_SERVER_ADDRESS=10.77.0.1/30", "AWG_GATEWAY_WAN_INTERFACE="+wan, "AWG_GATEWAY_PUBLIC_ENDPOINT=127.0.0.1:51820",
 		`AWG_GATEWAY_PARAMETERS={"jc":3,"jmin":40,"jmax":80,"s1":16,"s2":16,"s3":16,"s4":16,"h1":1001,"h2":1002,"h3":1003,"h4":1004}`)
 	client := &http.Client{Timeout: 2 * time.Second}
+	if onlinePresets {
+		client.Timeout = 10 * time.Second
+	}
 	base := "http://127.0.0.1:2222"
 	var stop func(bool)
 	defer func() {
@@ -137,13 +144,14 @@ func TestNativeOriginalApplyThroughApplication(t *testing.T) {
 			t.Fatal(err)
 		}
 		var envelope struct {
-			Error bool            `json:"error"`
-			Code  string          `json:"code"`
-			Data  json.RawMessage `json:"data"`
-			Check string          `json:"sbCheck"`
+			Error   bool            `json:"error"`
+			Code    string          `json:"code"`
+			Message string          `json:"message"`
+			Data    json.RawMessage `json:"data"`
+			Check   string          `json:"sbCheck"`
 		}
 		if err := json.Unmarshal(raw, &envelope); err != nil || resp.StatusCode != 200 || envelope.Error {
-			detail := regexp.MustCompile(`[A-Za-z0-9+/]{43}=`).ReplaceAllString(envelope.Check, "[redacted]")
+			detail := regexp.MustCompile(`[A-Za-z0-9+/]{43}=`).ReplaceAllString(envelope.Message+" "+envelope.Check, "[redacted]")
 			if len(detail) > 900 {
 				detail = detail[:900]
 			}
@@ -158,6 +166,43 @@ func TestNativeOriginalApplyThroughApplication(t *testing.T) {
 	var routerPresets []json.RawMessage
 	if err := json.Unmarshal(call("GET", "/api/singbox/router/presets/list", ""), &routerPresets); err != nil || len(routerPresets) != 77 {
 		t.Fatal("original router-applicable catalog differs", len(routerPresets), err)
+	}
+	if onlinePresets {
+		for _, preset := range []struct{ id, host, digest string }{
+			{"github", "github.com", "438f12d297174b168b3b6acd4572c360c083c24641736bdaefb4ed2cb3d0295f"},
+			{"twitch", "twitch.tv", "85e3b8d528cff47c0ac486f754ebc453fb5f1b78b8f9f1c7a22e398d89065bbf"},
+			{"spotify", "spotify.com", "784a099fc5c64cbacca85c46017bc58c0ad34b9919fcf4b831294f66ef8fe328"},
+		} {
+			path := filepath.Join(root, "sing-box", "config.d", "rule-sets", "presets", "sha256-"+preset.digest+".srs")
+			if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Fatalf("expected empty preset cache for %s, got %v", preset.id, err)
+			}
+			call("POST", "/api/singbox/router/presets/apply", `{"id":"`+preset.id+`","outbound":""}`)
+			raw, err := os.ReadFile(path)
+			if err != nil || fmt.Sprintf("%x", sha256.Sum256(raw)) != preset.digest {
+				t.Fatalf("downloaded %s cache differs from the catalog pin: %v", preset.id, err)
+			}
+			match := exec.CommandContext(ctx, "/usr/local/bin/sing-box", "rule-set", "match", "-f", "binary", path, preset.host)
+			result, err := match.CombinedOutput()
+			if err != nil || !strings.Contains(string(result), "match rules.") {
+				t.Fatalf("native matcher did not recognize %s: %v", preset.host, err)
+			}
+			t.Logf("downloaded %s via catalog API and verified native matching", preset.id)
+		}
+		call("POST", "/api/singbox/router/rules/move", `{"from":2,"to":0}`)
+		call("POST", "/api/singbox/router/staging/apply", `{}`)
+		stop(true)
+		pid = start()
+		var rules []struct {
+			RuleSet []string `json:"rule_set"`
+		}
+		err := json.Unmarshal(call("GET", "/api/singbox/router/rules/list", ""), &rules)
+		if err != nil || len(rules) != 3 || strings.Join(rules[0].RuleSet, ",") != "geosite-spotify" || strings.Join(rules[1].RuleSet, ",") != "geosite-github" || strings.Join(rules[2].RuleSet, ",") != "geosite-twitch" {
+			t.Fatal("original preset order lost after restart", rules, err)
+		}
+		stop(true)
+		t.Log("original catalog presets applied and restored in the selected order")
+		return
 	}
 	var caps struct{ SingboxRouter bool }
 	if err := json.Unmarshal(call("GET", "/api/capabilities", ""), &caps); err != nil || caps.SingboxRouter {
@@ -310,11 +355,18 @@ func TestNativeOriginalApplyThroughApplication(t *testing.T) {
 		packet.probe("block")
 		t.Log("original compiled rule-set blocked AWG TCP after Apply and restart")
 	}
-	if os.Getenv("AWGM_NATIVE_ORIGINAL_PRESET") == "1" {
+	if preset := os.Getenv("AWGM_NATIVE_ORIGINAL_PRESET"); preset == "1" || preset == "twitch" || preset == "spotify" {
 		if packet == nil {
 			t.Fatal("preset requires the packet fixture")
 		}
-		originalGoalGitHubPreset(t, ctx, root, call, packet)
+		presetID, host, digest := "github", "github.com", originalGeositePins["github"]
+		switch preset {
+		case "twitch":
+			presetID, host, digest = "twitch", "twitch.tv", originalGeositePins["twitch"]
+		case "spotify":
+			presetID, host, digest = "spotify", "scdn.co", originalGeositePins["spotify"]
+		}
+		originalGoalCatalogPreset(t, ctx, root, call, packet, presetID, host, digest)
 		originalGoalLiveBinding(t, ctx, client, root, pid, "direct")
 		stop(true)
 		client.CloseIdleConnections()
@@ -326,19 +378,24 @@ func TestNativeOriginalApplyThroughApplication(t *testing.T) {
 			t.Fatal("preset priority lost after restart", rules, err)
 		}
 		packet.provision()
-		packet.probePayload("block", []byte("GET / HTTP/1.0\nHOST:github.com\n\n"))
-		t.Log("original GitHub preset selected, reordered, applied and restored")
+		packet.probePayload("block", originalPresetProbePayload("HOST", host))
+		if presetID == "github" {
+			t.Log("original GitHub preset selected, reordered, applied and restored")
+		} else if presetID == "twitch" {
+			t.Log("original Twitch preset selected, reordered, applied and restored")
+		} else {
+			t.Log("original Spotify preset selected, reordered, applied and restored")
+		}
 	}
 	stop(true)
 	t.Log("original application HTTP Apply DIRECT/BLOCK/DIRECT and owned immutable generation/controller binding passed")
 }
 
-func originalGoalGitHubPreset(t *testing.T, ctx context.Context, root string, call func(string, string, string) json.RawMessage, packet *originalPacketFixture) {
+func originalGoalCatalogPreset(t *testing.T, ctx context.Context, root string, call func(string, string, string) json.RawMessage, packet *originalPacketFixture, presetID, host, digest string) {
 	t.Helper()
-	const digest = "438f12d297174b168b3b6acd4572c360c083c24641736bdaefb4ed2cb3d0295f"
-	raw, err := os.ReadFile("/artifacts/original-github-reference.srs")
+	raw, err := os.ReadFile("/artifacts/original-" + presetID + "-reference.srs")
 	if err != nil || fmt.Sprintf("%x", sha256.Sum256(raw)) != digest {
-		t.Fatal("original GitHub artifact differs", err)
+		t.Fatal("original catalog artifact differs", err)
 	}
 	store := filepath.Join(root, "sing-box", "config.d", "rule-sets", "presets")
 	if err := os.MkdirAll(store, 0700); err != nil {
@@ -348,20 +405,28 @@ func originalGoalGitHubPreset(t *testing.T, ctx context.Context, root string, ca
 	if err := os.WriteFile(path, raw, 0400); err != nil {
 		t.Fatal(err)
 	}
-	match := exec.CommandContext(ctx, "/usr/local/bin/sing-box", "rule-set", "match", "-f", "binary", path, "github.com")
+	match := exec.CommandContext(ctx, "/usr/local/bin/sing-box", "rule-set", "match", "-f", "binary", path, host)
 	result, _ := match.CombinedOutput()
 	if !strings.Contains(string(result), "match rules.") {
-		t.Fatal("pinned GitHub set did not match github.com")
+		t.Fatal("pinned set did not match", host)
 	}
-	call("POST", "/api/singbox/router/presets/apply", `{"id":"github","outbound":""}`)
-	call("POST", "/api/singbox/router/rules/add", `{"rule_set":["geosite-github"],"action":"route","outbound":"direct"}`)
+	call("POST", "/api/singbox/router/presets/apply", `{"id":"`+presetID+`","outbound":""}`)
+	call("POST", "/api/singbox/router/rules/add", `{"rule_set":["geosite-`+presetID+`"],"action":"route","outbound":"direct"}`)
 	call("POST", "/api/singbox/router/rules/move", `{"from":1,"to":0}`)
 	call("POST", "/api/singbox/router/staging/apply", `{}`)
-	packet.probePayload("direct", []byte("GET / HTTP/1.0\nHost:github.com\n\n"))
+	packet.probePayload("direct", originalPresetProbePayload("Host", host))
 	call("POST", "/api/singbox/router/rules/move", `{"from":1,"to":0}`)
 	call("POST", "/api/singbox/router/staging/apply", `{}`)
-	packet.probePayload("block", []byte("GET / HTTP/1.0\nhost:github.com\n\n"))
+	packet.probePayload("block", originalPresetProbePayload("host", host))
 	packet.probePayload("direct", []byte("GET / HTTP/1.0\nHost:example.io\n\n"))
+}
+
+func originalPresetProbePayload(header, host string) []byte {
+	request := []byte("GET / HTTP/1.0\n" + header + ":" + host + "\n\n")
+	for len(request) < 32 {
+		request = append(request, '\n')
+	}
+	return request
 }
 
 func originalGoalJournal(phase string, before, after routerpolicy.ApplyState) ([]byte, error) {

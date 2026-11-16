@@ -51,19 +51,7 @@ func AtomicWritePerm(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := f.Name()
-	// Закрываем сразу: writeFileSync открывает файл сам, а держать лишний
-	// дескриптор до конца функции незачем.
-	_ = f.Close()
-
-	// CreateTemp всегда создаёт файл с 0600 — режим цели ставим явно, иначе
-	// общие файлы (не секретные) остались бы строже, чем задумано, а
-	// секретные не стали бы строже сами.
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-
-	if err := writeFileSync(tmpPath, data, perm); err != nil {
+	if err := writeFileSync(f, data, perm); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("write temp file: %w", err)
 	}
@@ -77,12 +65,14 @@ func AtomicWritePerm(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-func writeFileSync(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
+func writeFileSync(f *os.File, data []byte, perm os.FileMode) error {
+	if _, err := f.Write(data); err != nil {
+		f.Close()
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
+	// Keep the temporary file private while writing, then publish it with the
+	// requested mode, which can be read-only.
+	if err := f.Chmod(perm); err != nil {
 		f.Close()
 		return err
 	}
